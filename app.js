@@ -437,6 +437,9 @@ function completeSet(exerciseIndex, setIndex) {
 function finishWorkout() {
   const workout = state.activeWorkout;
   if (!workout) return;
+  // Finishing without ticking anything means "I did it as planned": log every set with the usual numbers.
+  const quickFinish = !workout.exercises.some((exercise) => exercise.sets.some((set) => set.complete));
+  if (quickFinish) workout.exercises.forEach(fillAndCompleteSets);
   const finished = { id: workout.id, programDayId: workout.dayId, programWeek: workout.programWeek || 1, cycleId: workout.cycleId, name: workout.name, date: workout.date, duration: Math.max(1, Math.round((Date.now() - workout.startedAt) / 60000)), exercises: workout.exercises.map((exercise) => ({ exerciseId: exercise.exerciseId, name: exercise.name, notes: exercise.notes, sets: exercise.sets.filter((set) => set.complete).map(({ weight, reps }) => ({ weight: Number(weight) || 0, reps: Number(reps) || 0 })) })).filter((exercise) => exercise.sets.length) };
   if (finished.exercises.length) {
     state.history.unshift(finished);
@@ -453,7 +456,8 @@ function finishWorkout() {
     }
     state.activeWorkout = null; state.todayWorkoutOverride = null; state.activeTab = "Home"; save(); render();
     const personalBest = newPR ? `<span class="toast-line">New personal best · ${escapeHtml(newPR.name)} ${newPR.weight} ${state.units} × ${newPR.reps}</span>` : "";
-    toast(`<strong class="toast-title">Workout complete 🎉</strong>${personalBest}<span class="toast-line">${nextWorkoutMessage(previousWeek, previousCycleId)}</span>`, Boolean(newPR), 5000);
+    const quickLine = quickFinish ? `<span class="toast-line">All sets logged with your usual numbers.</span>` : "";
+    toast(`<strong class="toast-title">Workout complete 🎉</strong>${quickLine}${personalBest}<span class="toast-line">${nextWorkoutMessage(previousWeek, previousCycleId)}</span>`, Boolean(newPR), 5000);
   } else {
     state.activeWorkout = null; state.activeTab = "Home"; save(); render(); toast("Workout closed without completed sets.");
   }
@@ -1459,8 +1463,8 @@ function changeValue(button, delta) {
   save(); render();
 }
 // "All sets done": copy the set you adjusted to the untouched ones, otherwise reuse last session's numbers.
-function completeAllSets(exerciseIndex) {
-  const exercise = state.activeWorkout.exercises[exerciseIndex];
+// Marks every set done: untouched sets copy the set you adjusted, otherwise last session's numbers.
+function fillAndCompleteSets(exercise) {
   const source = [...exercise.sets].reverse().find((set) => set.edited);
   const previous = previousExercise({ id: exercise.exerciseId, name: exercise.name });
   exercise.sets.forEach((set, index) => {
@@ -1470,6 +1474,10 @@ function completeAllSets(exerciseIndex) {
     }
     set.complete = true;
   });
+  return { source, previous };
+}
+function completeAllSets(exerciseIndex) {
+  const { source, previous } = fillAndCompleteSets(state.activeWorkout.exercises[exerciseIndex]);
   state.activeWorkout.restEndsAt = null; clearInterval(restInterval); restInterval = null;
   save(); render();
   toast(source ? `All sets done · ${escapeHtml(source.weight === "" ? "—" : source.weight)} ${state.units} × ${escapeHtml(source.reps)}` : previous ? "All sets done with last session's numbers." : "All sets done.");
