@@ -307,7 +307,7 @@ function setSex(sex) {
 let onboardingAfterSex = "plans";
 function showSexOnboarding(next) {
   onboardingAfterSex = next;
-  document.querySelector(".onboarding").innerHTML = `<div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual" style="min-height:140px"><div style="text-align:center"><div class="eyebrow">About you</div><h2 style="margin-top:8px">How should Honna set things up?</h2></div></div><p class="onboarding-copy">This shapes your recommended plan and which features you see. You can change it anytime in Profile.</p><div class="onboarding-actions">${sexOptions.map(([value, label]) => `<button class="secondary-button" data-action="choose-sex" data-sex="${value}">${label}</button>`).join("")}</div></div><div><div class="step-dots"><i class="active"></i><i></i><i></i></div><button class="link-button" data-action="onboarding-back">Back</button></div>`;
+  document.querySelector(".onboarding").innerHTML = `<div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual" style="min-height:140px"><div style="text-align:center"><div class="eyebrow">About you</div><h2 style="margin-top:8px">Let&rsquo;s get to know you</h2></div></div><label class="field onboarding-name"><span class="field-label">What should we call you?</span><input class="text-field" id="onboarding-name" maxlength="32" placeholder="Your first name" autocomplete="given-name" value="${escapeHtml(state.name === defaultState().name ? "" : state.name)}"></label><p class="onboarding-copy">Then choose what fits. It shapes your recommended plan and which features you see. You can change both anytime in Profile.</p><div class="onboarding-actions">${sexOptions.map(([value, label]) => `<button class="secondary-button" data-action="choose-sex" data-sex="${value}">${label}</button>`).join("")}</div></div><div><div class="step-dots"><i class="active"></i><i></i><i></i></div><button class="link-button" data-action="onboarding-back">Back</button></div>`;
 }
 function renderAboutYouCard() {
   if (userSex()) return "";
@@ -1848,7 +1848,8 @@ document.addEventListener("click", (event) => {
   else if (action === "onboarding-next") showSexOnboarding("plans");
   else if (action === "choose-sex") {
     setSex(button.dataset.sex);
-    if (!state.onboarded && button.dataset.sex !== "female" && state.name === defaultState().name) state.name = ""; // no placeholder name
+    const nameInput = document.querySelector("#onboarding-name");
+    if (!state.onboarded && nameInput) state.name = nameInput.value.trim(); // empty is fine: the greeting then has no name
     if (!state.onboarded) {
       state.program = recommendedPlan(button.dataset.sex); // the starter plan matches; an import or own plan replaces it later
       if (onboardingAfterSex === "sample") showUnitsOnboarding(); else showPlanChoice();
