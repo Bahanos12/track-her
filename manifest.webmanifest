@@ -1,7 +1,7 @@
 {
   "id": "./index.html",
-  "name": "Track-Her",
-  "short_name": "Track-Her",
+  "name": "Honna",
+  "short_name": "Honna",
   "description": "Your workouts. Your progress. All in one place.",
   "start_url": "./index.html",
   "scope": "./",

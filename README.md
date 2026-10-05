@@ -1,4 +1,4 @@
-# Track-Her
+# Honna
 
 A calm, fast workout tracker. Installable web app: https://bahanos12.github.io/track-her/
 

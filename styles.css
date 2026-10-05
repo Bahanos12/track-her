@@ -180,3 +180,4 @@ h3 { font: 700 16px/1.35 Manrope, sans-serif; letter-spacing: 0; }
 .replacement-option.done { cursor: default; opacity: .55; }.replacement-option.done:hover { border-color: var(--line); background: white; }
 .plan-footer { display: grid; justify-items: start; gap: 10px; }.new-plan-button { display: inline-flex; align-items: center; gap: 8px; color: #9d5365; }.new-plan-button svg { width: 15px; height: 15px; }
 .day-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.set-heading-actions { display: flex; align-items: center; gap: 8px; }.set-delete { width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: white; color: #9d5365; font-size: 19px; line-height: 1; cursor: pointer; }.set-delete:hover { border-color: #e4c1cb; background: var(--tint-bg); }
