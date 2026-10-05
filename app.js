@@ -378,19 +378,40 @@ function renderProfile() {
 function renderOnboarding() {
   app.innerHTML = `<div class="onboarding"><div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual"><svg viewBox="0 0 220 190" fill="none" aria-hidden="true"><path d="M45 146c13-38 26-50 49-50 17 0 23 11 34 11 12 0 17-15 28-15 15 0 21 18 25 54" stroke="#60796c" stroke-width="14" stroke-linecap="round"/><path d="M73 81c-2-14 3-27 17-31 14-4 25 5 26 20 1 16-7 29-20 30-12 0-21-7-23-19Z" fill="#bd7f76"/><path d="M59 147h116" stroke="#40594d" stroke-width="8" stroke-linecap="round"/><circle cx="172" cy="48" r="16" fill="#dfb965"/><path d="m169 48 3 3 6-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="eyebrow">A little stronger, each time</div><h1>Welcome to Honna</h1><p class="onboarding-copy">Your workouts. Your progress. All in one place.</p></div><div><div class="step-dots"><i class="active"></i><i></i><i></i></div><div class="onboarding-actions"><button class="primary-button" data-action="onboarding-next">LET'S GET STARTED ${icon("arrow")}</button><button class="link-button" data-action="use-sample">Explore with a sample plan</button></div></div></div>`;
 }
+// A plan exercise as it appears in a live session, pre-filled with last time's numbers.
+function activeExerciseFrom(exercise) {
+  const previous = previousExercise(exercise);
+  const count = Math.max(Number(exercise.sets) || 1, previous?.sets?.length || 0);
+  return { exerciseId: exercise.id, name: exercise.name, targetSets: Number(exercise.sets) || 1, targetReps: Number(exercise.reps) || 0, rest: Number(exercise.rest) || 0, notes: exercise.notes || "", sets: Array.from({ length: count }, (_, index) => ({ weight: previous?.sets?.[index]?.weight ?? previous?.sets?.at(-1)?.weight ?? "", reps: previous?.sets?.[index]?.reps ?? previous?.sets?.at(-1)?.reps ?? (Number(exercise.reps) || 0), complete: false })) };
+}
 function startWorkout(workout, scheduledWorkoutId = workout.id, scheduledProgramWeek = workout.programWeek || 1) {
-  state.activeWorkout = { id: uid(), dayId: scheduledWorkoutId, workoutId: workout.id, programWeek: scheduledProgramWeek, cycleId: state.program.cycleId, name: workout.name, date: todayKey(), startedAt: Date.now(), exercises: workout.exercises.map((exercise) => {
-    const previous = previousExercise(exercise);
-    const count = Math.max(Number(exercise.sets) || 1, previous?.sets?.length || 0);
-    return { exerciseId: exercise.id, name: exercise.name, targetSets: Number(exercise.sets) || 1, targetReps: Number(exercise.reps) || 0, rest: Number(exercise.rest) || 0, notes: exercise.notes || "", sets: Array.from({ length: count }, (_, index) => ({ weight: previous?.sets?.[index]?.weight ?? previous?.sets?.at(-1)?.weight ?? "", reps: previous?.sets?.[index]?.reps ?? previous?.sets?.at(-1)?.reps ?? (Number(exercise.reps) || 0), complete: false })) };
-  }) };
+  state.activeWorkout = { id: uid(), dayId: scheduledWorkoutId, workoutId: workout.id, programWeek: scheduledProgramWeek, cycleId: state.program.cycleId, name: workout.name, date: todayKey(), startedAt: Date.now(), exercises: workout.exercises.map(activeExerciseFrom) };
   save(); render();
+}
+function showAddActiveExercise() {
+  const planDay = state.program.days.find((day) => day.id === state.activeWorkout.workoutId);
+  const known = allExerciseNames().map((name) => `<option value="${escapeHtml(name)}"></option>`).join("");
+  showSheet("Add an exercise", "Adds it to this workout. Your last numbers for it are filled in.", `<label class="field"><span class="field-label">Exercise name</span><input class="text-field" id="active-exercise-name" list="known-exercises" placeholder="Start typing — e.g. Cable Kickback" maxlength="60" autocomplete="off"><datalist id="known-exercises">${known}</datalist></label><div class="counter-row"><label class="field"><span class="field-label">Sets</span><input class="number-field" id="active-exercise-sets" type="number" min="1" max="20" value="3"></label><label class="field"><span class="field-label">Rep target</span><input class="number-field" id="active-exercise-reps" type="number" min="1" max="100" placeholder="10"></label></div><label class="field"><span class="field-label">Rest (seconds)</span><input class="number-field" id="active-exercise-rest" type="number" min="0" max="900" value="90"></label>${planDay ? `<label class="check-field"><input type="checkbox" id="active-exercise-to-plan"><span>Also add it to ${escapeHtml(planDay.name)} in my plan</span></label>` : ""}`, `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="save-active-exercise">ADD</button>`);
+}
+function saveActiveExercise() {
+  const nameInput = document.querySelector("#active-exercise-name");
+  const name = nameInput.value.trim();
+  if (!name) { nameInput.focus(); return; }
+  const known = getExercise(null, name); // same spelling as the known exercise, so its last numbers are found by name
+  const exercise = { id: uid(), name: known?.name || name, sets: Math.max(1, Number(document.querySelector("#active-exercise-sets").value) || 3), reps: Number(document.querySelector("#active-exercise-reps").value) || "", rest: Number(document.querySelector("#active-exercise-rest").value) || "", effort: "", notes: "", equipment: known?.equipment || "other" };
+  state.activeWorkout.exercises.push(activeExerciseFrom(exercise));
+  const planDay = state.program.days.find((day) => day.id === state.activeWorkout.workoutId);
+  const toPlan = planDay && document.querySelector("#active-exercise-to-plan")?.checked;
+  if (toPlan) planDay.exercises.push({ ...exercise });
+  save(); document.querySelector(".overlay")?.remove(); render();
+  toast(`${escapeHtml(exercise.name)} added${toPlan ? " to this workout and your plan" : " to this workout"}.`);
+  document.querySelectorAll(".log-card")[state.activeWorkout.exercises.length - 1]?.scrollIntoView({ block: "center" });
 }
 function renderWorkout() {
   const workout = state.activeWorkout;
   const completed = workout.exercises.reduce((total, exercise) => total + exercise.sets.filter((set) => set.complete).length, 0);
   const total = workout.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
-  return `<header class="workout-header"><button class="inline-icon-button" data-action="exit-workout" aria-label="Exit workout">‹</button><div><h2>${escapeHtml(workout.name)}</h2><p>${prettyDate(workout.date, { weekday: "long", month: "short", day: "numeric" })}</p></div><button class="link-button" style="margin-left:auto" data-action="finish-workout">Finish</button></header><div class="workout-progress"><div class="workout-progress-label"><span>Your session</span><span>${completed} of ${total} sets</span></div><div class="progress-track"><span style="width:${total ? completed / total * 100 : 0}%"></span></div></div>${workout.restEndsAt ? renderRestTimer() : ""}${workout.exercises.map((exercise, index) => renderLogExercise(exercise, index)).join("")}<button class="primary-button finish-button" data-action="finish-workout">FINISH WORKOUT ${icon("check")}</button>`;
+  return `<header class="workout-header"><button class="inline-icon-button" data-action="exit-workout" aria-label="Exit workout">‹</button><div><h2>${escapeHtml(workout.name)}</h2><p>${prettyDate(workout.date, { weekday: "long", month: "short", day: "numeric" })}</p></div><button class="link-button" style="margin-left:auto" data-action="finish-workout">Finish</button></header><div class="workout-progress"><div class="workout-progress-label"><span>Your session</span><span>${completed} of ${total} sets</span></div><div class="progress-track"><span style="width:${total ? completed / total * 100 : 0}%"></span></div></div>${workout.restEndsAt ? renderRestTimer() : ""}${workout.exercises.map((exercise, index) => renderLogExercise(exercise, index)).join("")}<button class="secondary-button add-exercise-button" data-action="add-active-exercise">+ &nbsp;Add exercise</button><button class="primary-button finish-button" data-action="finish-workout">FINISH WORKOUT ${icon("check")}</button>`;
 }
 function renderLogExercise(exercise, exerciseIndex) {
   const previous = previousExercise({ id: exercise.exerciseId, name: exercise.name });
@@ -1629,6 +1650,8 @@ document.addEventListener("click", (event) => {
   else if (action === "edit-value") editValue(button);
   else if (action === "complete-set") completeSet(Number(button.dataset.exerciseIndex), Number(button.dataset.setIndex));
   else if (action === "add-set") addSet(Number(button.dataset.exerciseIndex));
+  else if (action === "add-active-exercise") showAddActiveExercise();
+  else if (action === "save-active-exercise") saveActiveExercise();
   else if (action === "delete-set") deleteSet(Number(button.dataset.exerciseIndex), Number(button.dataset.setIndex));
   else if (action === "complete-all-sets") completeAllSets(Number(button.dataset.exerciseIndex));
   else if (action === "skip-rest") { state.activeWorkout.restEndsAt = null; clearInterval(restInterval); save(); render(); }
