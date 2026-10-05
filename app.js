@@ -158,12 +158,53 @@ function advanceProgramCycle() {
   const activeWeek = Number(state.program.activeCycleWeek) || 1;
   const weekDays = activeCycleDays();
   if (!weekDays.length || !weekDays.every(isWorkoutComplete)) return;
-  if (activeWeek < cycleWeeks) state.program.activeCycleWeek = activeWeek + 1;
+  const nextWeek = firstWeekWithSessions(activeWeek + 1);
+  if (nextWeek) state.program.activeCycleWeek = nextWeek;
   else if (state.program.repeatWeekly) {
-    state.program.activeCycleWeek = 1;
+    state.program.activeCycleWeek = firstWeekWithSessions(1) || 1;
       state.program.cycleId = uid();
       state.program.cycleStartedAt = todayKey();
   } else state.program.activeCycleWeek = cycleWeeks + 1;
+}
+// First week from `from` up to the program's end that still has sessions (weeks can be emptied by deleting days).
+function firstWeekWithSessions(from) {
+  const cycleWeeks = Number(state.program.cycleWeeks) || 1;
+  for (let week = from; week <= cycleWeeks; week += 1) if (state.program.days.some((day) => (Number(day.programWeek) || 1) === week)) return week;
+  return null;
+}
+function confirmDeleteDay(dayId) {
+  const day = state.program.days.find((item) => item.id === dayId);
+  if (!day) return;
+  if (state.activeWorkout?.dayId === dayId || state.activeWorkout?.workoutId === dayId) { toast("Finish or exit the workout in progress first."); return; }
+  const multiWeek = Number(state.program.cycleWeeks) > 1;
+  const renumbers = /\bday\s*\d{1,2}\b/i.test(day.name);
+  const where = multiWeek ? ` in Week ${Number(day.programWeek) || 1}` : "";
+  const count = day.exercises.length;
+  showSheet(`Delete ${day.name}?`, `This removes the session and its ${count} ${count === 1 ? "exercise" : "exercises"} from your plan. Your workout history stays saved.${renumbers ? ` The days after it${where} move up one number.` : ""}`, "", `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="danger-button" data-action="confirm-delete-day" data-day-id="${dayId}">DELETE DAY</button>`);
+}
+function deleteDay(dayId) {
+  const day = state.program.days.find((item) => item.id === dayId);
+  if (!day) return;
+  const week = Number(day.programWeek) || 1;
+  const multiWeek = Number(state.program.cycleWeeks) > 1;
+  state.program.days = state.program.days.filter((item) => item.id !== dayId);
+  // Renumber "Day N" in what's left of that week, in plan order: deleting Day 3 makes Day 4 the new Day 3.
+  let number = 0;
+  for (const item of state.program.days) {
+    if (multiWeek && (Number(item.programWeek) || 1) !== week) continue;
+    if (!/\bday\s*\d{1,2}\b/i.test(item.name)) continue;
+    number += 1;
+    item.name = item.name.replace(/\b(day\s*)\d{1,2}\b/i, (match, prefix) => `${prefix}${number}`);
+  }
+  const override = state.todayWorkoutOverride;
+  if (override && (override.scheduledDayId === dayId || override.workoutId === dayId)) state.todayWorkoutOverride = null;
+  // If the active week is now empty, move on to the next week that still has sessions.
+  if (multiWeek && !activeCycleDays().length) {
+    const active = Number(state.program.activeCycleWeek) || 1;
+    if (active <= Number(state.program.cycleWeeks)) state.program.activeCycleWeek = firstWeekWithSessions(active) || (state.program.repeatWeekly ? firstWeekWithSessions(1) || 1 : Number(state.program.cycleWeeks) + 1);
+  }
+  save(); document.querySelector(".overlay")?.remove(); render();
+  toast(`${escapeHtml(day.name)} deleted.`);
 }
 function getExercise(id, name) { return state.program.days.flatMap((day) => day.exercises).find((exercise) => exercise.id === id || exercise.name.toLowerCase() === name?.toLowerCase()); }
 function previousExercise(exercise) {
@@ -292,7 +333,7 @@ function renderPlan() {
   const repeatTitle = multiWeek ? `Repeat full ${state.program.cycleWeeks}-week program` : "Repeat this cycle every week";
   const repeatHint = repeatWeekly ? (multiWeek ? "Starts again at Week 1 when the full program is complete." : "Your sessions restart next week.") : "This program stops after its sessions are complete.";
   const planSummary = multiWeek ? `${state.program.cycleWeeks}-week program · ${state.program.days.length} sessions` : `${state.program.days.length} training days`;
-  return `<section class="page-intro"><div class="eyebrow">Your routine</div><h1>Your plan</h1><p>Keep it simple. Show up, one session at a time.</p></section><div class="toolbar"><div><h3>${escapeHtml(state.program.name)}</h3><span class="eyebrow">${planSummary}</span></div><button class="inline-icon-button" data-action="edit-program" aria-label="Edit program name">${icon("edit")}</button></div><div class="button-row" style="margin-bottom:14px"><button class="secondary-button" data-action="import-pdf">↑ &nbsp;Import PDF</button><button class="secondary-button" data-action="add-day">+ &nbsp;Add workout</button></div><div class="setting-row cycle-setting"><div><strong>${repeatTitle}</strong><small>${repeatHint}</small></div><select class="select-field" data-change="repeat-weekly" aria-label="Repeat this cycle every week"><option value="false" ${repeatWeekly ? "" : "selected"}>One-time</option><option value="true" ${repeatWeekly ? "selected" : ""}>Repeat</option></select></div><div class="program-card">${state.program.days.map((day) => `<section class="day-block"><div class="day-heading"><div><div class="day-label"><i class="day-dot"></i>${escapeHtml(day.name)}</div><div class="day-name">${multiWeek ? `Week ${day.programWeek || 1} · ` : ""}${escapeHtml(day.day)}</div></div><button class="inline-icon-button" data-action="add-exercise" data-day-id="${day.id}" aria-label="Add exercise to ${escapeHtml(day.name)}">+</button></div>${day.exercises.length ? day.exercises.map((exercise) => `<div class="plan-exercise"><strong>${escapeHtml(exercise.name)}</strong><div class="plan-exercise-detail"><span>${exercise.sets} × ${exercise.reps || "—"}${exercise.rest ? ` · ${exercise.rest}s rest` : ""}</span><button class="inline-icon-button" data-action="replace-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Replace ${escapeHtml(exercise.name)}" title="Find a similar movement">${icon("swap")}</button><button class="inline-icon-button destructive-icon" data-action="remove-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Remove ${escapeHtml(exercise.name)}" title="Remove from this workout">${icon("trash")}</button></div></div>`).join("") : `<p class="day-empty">No exercises yet. Tap + to add one.</p>`}</section>`).join("") || `<div class="empty-state"><h3>No workouts yet</h3><p>Add a workout day to begin.</p><button class="primary-button" data-action="add-day">ADD WORKOUT</button></div>`}</div><div class="section plan-footer"><button class="link-button" data-action="import-pdf">Import a workout PDF →</button>${state.program.days.length ? `<button class="secondary-button new-plan-button" data-action="new-plan">${icon("trash")} Delete plan &amp; start a new one</button>` : ""}</div>`;
+  return `<section class="page-intro"><div class="eyebrow">Your routine</div><h1>Your plan</h1><p>Keep it simple. Show up, one session at a time.</p></section><div class="toolbar"><div><h3>${escapeHtml(state.program.name)}</h3><span class="eyebrow">${planSummary}</span></div><button class="inline-icon-button" data-action="edit-program" aria-label="Edit program name">${icon("edit")}</button></div><div class="button-row" style="margin-bottom:14px"><button class="secondary-button" data-action="import-pdf">↑ &nbsp;Import PDF</button><button class="secondary-button" data-action="add-day">+ &nbsp;Add workout</button></div><div class="setting-row cycle-setting"><div><strong>${repeatTitle}</strong><small>${repeatHint}</small></div><select class="select-field" data-change="repeat-weekly" aria-label="Repeat this cycle every week"><option value="false" ${repeatWeekly ? "" : "selected"}>One-time</option><option value="true" ${repeatWeekly ? "selected" : ""}>Repeat</option></select></div><div class="program-card">${state.program.days.map((day) => `<section class="day-block"><div class="day-heading"><div><div class="day-label"><i class="day-dot"></i>${escapeHtml(day.name)}</div><div class="day-name">${multiWeek ? `Week ${day.programWeek || 1} · ` : ""}${escapeHtml(day.day)}</div></div><div class="day-actions"><button class="inline-icon-button" data-action="add-exercise" data-day-id="${day.id}" aria-label="Add exercise to ${escapeHtml(day.name)}">+</button><button class="inline-icon-button destructive-icon" data-action="delete-day" data-day-id="${day.id}" aria-label="Delete ${escapeHtml(day.name)}" title="Delete this day">${icon("trash")}</button></div></div>${day.exercises.length ? day.exercises.map((exercise) => `<div class="plan-exercise"><strong>${escapeHtml(exercise.name)}</strong><div class="plan-exercise-detail"><span>${exercise.sets} × ${exercise.reps || "—"}${exercise.rest ? ` · ${exercise.rest}s rest` : ""}</span><button class="inline-icon-button" data-action="replace-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Replace ${escapeHtml(exercise.name)}" title="Find a similar movement">${icon("swap")}</button><button class="inline-icon-button destructive-icon" data-action="remove-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Remove ${escapeHtml(exercise.name)}" title="Remove from this workout">${icon("trash")}</button></div></div>`).join("") : `<p class="day-empty">No exercises yet. Tap + to add one.</p>`}</section>`).join("") || `<div class="empty-state"><h3>No workouts yet</h3><p>Add a workout day to begin.</p><button class="primary-button" data-action="add-day">ADD WORKOUT</button></div>`}</div><div class="section plan-footer"><button class="link-button" data-action="import-pdf">Import a workout PDF →</button>${state.program.days.length ? `<button class="secondary-button new-plan-button" data-action="new-plan">${icon("trash")} Delete plan &amp; start a new one</button>` : ""}</div>`;
 }
 function allExerciseNames() { return [...new Set([...state.program.days.flatMap((day) => day.exercises.map((exercise) => exercise.name)), ...state.history.flatMap((workout) => workout.exercises.map((exercise) => exercise.name))])].sort(); }
 function recordsFor(name) { return state.history.flatMap((workout) => workout.exercises.filter((exercise) => exercise.name.toLowerCase() === name.toLowerCase()).flatMap((exercise) => exercise.sets.map((set) => ({ ...set, date: workout.date })))); }
@@ -1483,6 +1524,8 @@ document.addEventListener("click", (event) => {
   else if (action === "save-program") { const value = document.querySelector("#program-name")?.value.trim(); if (value) state.program.name = value; save(); document.querySelector(".overlay")?.remove(); render(); }
   else if (action === "add-day") showDayEditor();
   else if (action === "new-plan") confirmNewPlan();
+  else if (action === "delete-day") confirmDeleteDay(button.dataset.dayId);
+  else if (action === "confirm-delete-day") deleteDay(button.dataset.dayId);
   else if (action === "confirm-new-plan") startNewPlan();
   else if (action === "new-plan-manual") showDayEditor();
   else if (action === "save-day") { const day = document.querySelector("#day-name").value; const name = document.querySelector("#workout-name").value.trim() || "Workout"; state.program.days.push({ id: uid(), day, name, exercises: [] }); state.program.days.sort((a, b) => weekdayNames.indexOf(a.day) - weekdayNames.indexOf(b.day)); save(); document.querySelector(".overlay")?.remove(); render(); }

@@ -179,3 +179,4 @@ h3 { font: 700 16px/1.35 Manrope, sans-serif; letter-spacing: 0; }
 .week-tab { flex: 0 0 auto; min-height: 40px; padding: 0 13px; border: 1px solid var(--line); border-radius: 99px; background: white; color: var(--ink); font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }.week-tab.selected { border-color: var(--sage-dark); background: var(--sage-dark); color: white; }
 .replacement-option.done { cursor: default; opacity: .55; }.replacement-option.done:hover { border-color: var(--line); background: white; }
 .plan-footer { display: grid; justify-items: start; gap: 10px; }.new-plan-button { display: inline-flex; align-items: center; gap: 8px; color: #9d5365; }.new-plan-button svg { width: 15px; height: 15px; }
+.day-actions { display: flex; gap: 6px; flex: 0 0 auto; }
