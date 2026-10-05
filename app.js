@@ -181,9 +181,31 @@ function replacementSuggestions(name) {
   const group = replacementGroups.find((candidate) => candidate.matches.test(name));
   return group ? { label: group.label, options: group.options.filter(([option]) => option.toLowerCase() !== name.toLowerCase()) } : null;
 }
-function toast(message, pr = false) {
-  toastRegion.innerHTML = `<div class="toast${pr ? " pr" : ""}">${message}</div>`;
-  window.setTimeout(() => { toastRegion.innerHTML = ""; }, 3000);
+let toastTimer = null;
+function toast(message, pr = false, duration = 3000) {
+  toastRegion.innerHTML = `<div class="toast${pr ? " pr" : ""}" role="status">${message}</div>`;
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => { toastRegion.innerHTML = ""; }, duration);
+}
+// Describes where the plan goes after a finished workout (call after advanceProgramCycle).
+function nextWorkoutMessage(previousWeek, previousCycleId) {
+  const multiWeek = Number(state.program.cycleWeeks) > 1;
+  const week = Number(state.program.activeCycleWeek) || 1;
+  const next = currentWorkout() || getUpcomingWorkout();
+  const describe = (day, thisWeek = true) => {
+    const weekNote = multiWeek && !/\bweek\s*\d/i.test(day.name) ? ` · Week ${week}` : "";
+    const when = weekdayNames.includes(day.day) ? ` — ${thisWeek && day.day === todayDay() ? "Today" : day.day}` : "";
+    return `Next workout: ${escapeHtml(day.name)}${weekNote}${when}`;
+  };
+  if (next) {
+    if (multiWeek && state.program.cycleId !== previousCycleId) return `Program complete — starting again at Week 1.<br>${describe(next)}`;
+    if (multiWeek && week !== previousWeek) return `Week ${previousWeek} done. ${describe(next)}`;
+    return describe(next);
+  }
+  if (multiWeek && week > Number(state.program.cycleWeeks)) return "Program complete. Turn on repeat in Plan to go again.";
+  if (!state.program.repeatWeekly) return "Plan complete. Turn on weekly repeat in Plan to reuse it.";
+  const firstNextWeek = [...activeCycleDays()].sort((a, b) => (weekdayNames.indexOf(a.day) + 6) % 7 - (weekdayNames.indexOf(b.day) + 6) % 7)[0];
+  return firstNextWeek ? `Week complete. ${describe(firstNextWeek, false)}` : "Week complete.";
 }
 function weekdayDate(dayName) {
   const now = new Date();
@@ -360,17 +382,19 @@ function finishWorkout() {
   if (finished.exercises.length) {
     state.history.unshift(finished);
     state.history = state.history.slice(0, 250);
+    const previousWeek = Number(state.program.activeCycleWeek) || 1, previousCycleId = state.program.cycleId;
     advanceProgramCycle();
     let newPR = null;
     for (const exercise of finished.exercises) for (const set of exercise.sets) {
+      if (!(Number(set.weight) > 0)) continue; // unweighted sets are logged, but never a personal best
       const key = exercise.name.toLowerCase();
       const old = state.prs[key];
       const score = Number(set.weight) * (1 + Number(set.reps) / 30);
       if (!old || score > old.score) { state.prs[key] = { weight: set.weight, reps: set.reps, score }; if (!old || Number(set.weight) > Number(old.weight)) newPR = { name: exercise.name, ...set, previous: old }; }
     }
     state.activeWorkout = null; state.todayWorkoutOverride = null; state.activeTab = "Home"; save(); render();
-    if (newPR) toast(`New personal best · ${escapeHtml(newPR.name)} ${newPR.weight} ${state.units} × ${newPR.reps}`, true);
-    else toast("Workout saved. Nice work.");
+    const personalBest = newPR ? `<span class="toast-line">New personal best · ${escapeHtml(newPR.name)} ${newPR.weight} ${state.units} × ${newPR.reps}</span>` : "";
+    toast(`<strong class="toast-title">Workout complete 🎉</strong>${personalBest}<span class="toast-line">${nextWorkoutMessage(previousWeek, previousCycleId)}</span>`, Boolean(newPR), 5000);
   } else {
     state.activeWorkout = null; state.activeTab = "Home"; save(); render(); toast("Workout closed without completed sets.");
   }
@@ -503,10 +527,17 @@ function applyMovementReplacement(button, name, equipment) {
   save(); render(); toast(`${escapeHtml(name)} added to your plan.`);
 }
 function showWorkoutDayPicker(scheduledDayId) {
-  const options = state.program.days.filter((day) => day.id !== scheduledDayId && !isWorkoutComplete(day));
-  if (!options.length) { toast("There are no other sessions available this week."); return; }
-  const content = `<div class="replacement-options">${options.map((day) => `<button class="replacement-option" data-action="choose-today-workout" data-scheduled-day-id="${scheduledDayId}" data-workout-id="${day.id}"><span><strong>${escapeHtml(day.name)}</strong><small>${escapeHtml(day.day)} · ${day.exercises.length} exercises</small></span>${icon("arrow")}</button>`).join("")}</div>`;
-  showSheet("Change today's session", "For today only. Your program stays as planned, and your scheduled session counts as complete when you finish.", content, `<button class="secondary-button" data-action="close-sheet">Keep original</button>`);
+  const override = state.todayWorkoutOverride;
+  const selectedId = override?.date === todayKey() && override.scheduledDayId === scheduledDayId ? override.workoutId : scheduledDayId;
+  // Every open session of the active week, always including the scheduled one so you can switch back.
+  const options = activeCycleDays().filter((day) => day.id === scheduledDayId || day.id === selectedId || !isWorkoutComplete(day));
+  if (options.length < 2) { toast("There are no other sessions available this week."); return; }
+  const content = `<div class="replacement-options">${options.map((day) => {
+    const selected = day.id === selectedId;
+    const detail = [weekdayNames.includes(day.day) ? day.day : "", `${day.exercises.length} exercises`, day.id === scheduledDayId ? "Scheduled" : ""].filter(Boolean).join(" · ");
+    return `<button class="replacement-option${selected ? " selected" : ""}" data-action="choose-today-workout" data-scheduled-day-id="${scheduledDayId}" data-workout-id="${day.id}"${selected ? ' aria-current="true"' : ""}><span><strong>${escapeHtml(day.name)}</strong><small>${escapeHtml(detail)}</small></span>${icon(selected ? "check" : "arrow")}</button>`;
+  }).join("")}</div>`;
+  showSheet("Pick today's session", "For today only. Your program stays as planned, and your scheduled session counts as complete when you finish.", content, `<button class="secondary-button" data-action="close-sheet">Close</button>`);
 }
 function showUnitsOnboarding() {
   document.querySelector(".onboarding").innerHTML = `<div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Track-Her</div><div class="onboarding-visual" style="min-height:140px"><div style="text-align:center"><div class="eyebrow">One last thing</div><h2 style="margin-top:8px">Your preferred units</h2></div></div><div class="eyebrow">Choose what feels familiar</div><div class="onboarding-actions" style="grid-template-columns:1fr 1fr"><button class="${state.units === "kg" ? "primary-button" : "secondary-button"}" data-action="set-units-onboarding" data-units="kg">kg <span style="font-weight:400">Kilograms</span></button><button class="${state.units === "lbs" ? "primary-button" : "secondary-button"}" data-action="set-units-onboarding" data-units="lbs">lbs <span style="font-weight:400">Pounds</span></button></div></div><div><div class="step-dots"><i></i><i></i><i class="active"></i></div><button class="primary-button" style="width:100%" data-action="complete-onboarding">GO TO MY WORKOUT ${icon("arrow")}</button></div>`;
@@ -1107,8 +1138,9 @@ document.addEventListener("click", (event) => {
   }
   else if (action === "change-today-workout") showWorkoutDayPicker(button.dataset.scheduledDayId);
   else if (action === "choose-today-workout") {
-    state.todayWorkoutOverride = { date: todayKey(), scheduledDayId: button.dataset.scheduledDayId, workoutId: button.dataset.workoutId };
-    save(); document.querySelector(".overlay")?.remove(); render(); toast("Today's session changed. Your plan is unchanged.");
+    const backToScheduled = button.dataset.workoutId === button.dataset.scheduledDayId;
+    state.todayWorkoutOverride = backToScheduled ? null : { date: todayKey(), scheduledDayId: button.dataset.scheduledDayId, workoutId: button.dataset.workoutId };
+    save(); document.querySelector(".overlay")?.remove(); render(); toast(backToScheduled ? "Back to your scheduled session." : "Today's session changed. Your plan is unchanged.");
   }
   else if (action === "edit-program") showProgramEditor();
   else if (action === "save-program") { const value = document.querySelector("#program-name")?.value.trim(); if (value) state.program.name = value; save(); document.querySelector(".overlay")?.remove(); render(); }
