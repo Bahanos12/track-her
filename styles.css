@@ -197,3 +197,5 @@ button.exercise-row { width: 100%; border-width: 0 0 1px; border-style: solid; b
 .symptom-chips { display: flex; flex-wrap: wrap; gap: 7px; }.symptom-chip { min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 99px; background: white; color: var(--ink); font-size: 12px; font-weight: 600; cursor: pointer; }.symptom-chip.selected { border-color: var(--sage-dark); background: var(--sage-dark); color: white; }
 .cycle-insight { margin-bottom: 14px; padding: 12px; border-radius: 10px; background: var(--sage-soft); }.cycle-insight p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; }
 .insight-list, .plain-list { margin: 4px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.55; }.insight-list small { color: var(--muted); }.muted-copy { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.sex-actions { flex-wrap: wrap; }.sex-actions > * { flex: 1 1 30%; min-height: 42px; padding: 0 8px; font-size: 12px; }
+.empty-actions { display: grid; gap: 9px; justify-items: center; }.empty-actions .secondary-button { min-width: 180px; }

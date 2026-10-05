@@ -39,6 +39,7 @@ function applyTheme() {
 }
 const defaultState = () => ({
   version: 1, onboarded: false, name: "Sarah", units: "kg", weightStep: 2.5, theme: "plum", activeTab: "Home", activeWorkout: null, todayWorkoutOverride: null,
+  sex: "", // "female" | "male" | "unspecified" ("" = not asked yet)
   // Optional cycle-aware training. "asked" records that the opt-in question was answered.
   menstrual: { asked: false, enabled: false, periodStarts: [], cycleLength: null, periodLength: 5, regularity: "unknown", contraception: "", checkins: [], dismissedInsights: {} },
   program: { name: "Glute Growth", repeatWeekly: true, cycleWeeks: 1, activeCycleWeek: 1, cycleStartedAt: todayKey(), days: [
@@ -278,6 +279,40 @@ function getUpcomingWorkout() {
   });
   return ordered.find((day) => !isWorkoutComplete(day)) || null;
 }
+// ---------- About you & recommended plans ----------
+// Existing users who already turned on cycle tracking are treated as female.
+function userSex() { return state.sex || (state.menstrual?.enabled ? "female" : ""); }
+function cycleAvailable() { return userSex() === "female"; }
+const planExercise = (id, name, sets, reps, rest, equipment, notes = "") => ({ id, name, sets, reps, rest, notes, equipment });
+// A starter plan for people who don't have one yet, chosen by what they told us about themselves.
+function recommendedPlan(sex = userSex()) {
+  const base = { repeatWeekly: true, cycleWeeks: 1, activeCycleWeek: 1, cycleId: uid(), cycleStartedAt: todayKey() };
+  if (sex === "male") return { ...base, name: "Strength Builder", days: [
+    { id: "sb-upper", day: "Monday", programWeek: 1, name: "Upper Body", exercises: [planExercise("sb-bench", "Barbell Bench Press", 4, 6, 150, "barbell"), planExercise("sb-row", "Barbell Row", 4, 8, 120, "barbell"), planExercise("sb-ohp", "Overhead Press", 3, 8, 120, "barbell"), planExercise("sb-pulldown", "Lat Pulldown", 3, 10, 90, "machine"), planExercise("sb-curl", "Dumbbell Curl", 3, 12, 60, "dumbbell"), planExercise("sb-pressdown", "Triceps Pressdown", 3, 12, 60, "cable")] },
+    { id: "sb-lower", day: "Wednesday", programWeek: 1, name: "Lower Body", exercises: [planExercise("sb-squat", "Back Squat", 4, 6, 180, "barbell"), planExercise("sb-rdl", "Romanian Deadlift", 3, 8, 120, "barbell"), planExercise("sb-legpress", "Leg Press", 3, 10, 120, "machine"), planExercise("sb-legcurl", "Leg Curl", 3, 12, 75, "machine"), planExercise("sb-calf", "Standing Calf Raise", 3, 15, 60, "machine")] },
+    { id: "sb-full", day: "Friday", programWeek: 1, name: "Full Body", exercises: [planExercise("sb-deadlift", "Deadlift", 3, 5, 180, "barbell"), planExercise("sb-incline", "Incline Dumbbell Press", 3, 10, 90, "dumbbell"), planExercise("sb-pullup", "Pull-Up", 3, 8, 120, "bodyweight", "Use assistance if needed"), planExercise("sb-lunge", "Walking Lunge", 3, 10, 90, "dumbbell", "Each leg"), planExercise("sb-lateral", "Lateral Raise", 3, 15, 60, "dumbbell")] },
+  ] };
+  if (sex === "female") return { ...base, name: "Glute Growth", days: defaultState().program.days.map((day) => ({ ...day, programWeek: 1 })) };
+  return { ...base, name: "Full Body Basics", days: [
+    { id: "fb-a", day: "Monday", programWeek: 1, name: "Full Body A", exercises: [planExercise("fb-squat", "Goblet Squat", 3, 10, 90, "dumbbell"), planExercise("fb-bench", "Dumbbell Bench Press", 3, 10, 90, "dumbbell"), planExercise("fb-row", "Seated Cable Row", 3, 10, 90, "cable"), planExercise("fb-hipthrust", "Hip Thrust", 3, 10, 90, "barbell"), planExercise("fb-plank", "Plank", 3, 30, 60, "bodyweight", "Seconds")] },
+    { id: "fb-b", day: "Wednesday", programWeek: 1, name: "Full Body B", exercises: [planExercise("fb-rdl", "Romanian Deadlift", 3, 10, 90, "barbell"), planExercise("fb-ohp", "Dumbbell Shoulder Press", 3, 10, 90, "dumbbell"), planExercise("fb-pulldown", "Lat Pulldown", 3, 10, 90, "machine"), planExercise("fb-lunge", "Reverse Lunge", 3, 10, 90, "dumbbell", "Each leg"), planExercise("fb-deadbug", "Dead Bug", 3, 12, 60, "bodyweight")] },
+    { id: "fb-c", day: "Friday", programWeek: 1, name: "Full Body C", exercises: [planExercise("fb-legpress", "Leg Press", 3, 12, 90, "machine"), planExercise("fb-incline", "Incline Push-Up", 3, 12, 60, "bodyweight"), planExercise("fb-onearm", "One-Arm Dumbbell Row", 3, 10, 75, "dumbbell", "Each side"), planExercise("fb-legcurl", "Leg Curl", 3, 12, 75, "machine"), planExercise("fb-lateral", "Lateral Raise", 3, 15, 60, "dumbbell")] },
+  ] };
+}
+const sexOptions = [["female", "Female"], ["male", "Male"], ["unspecified", "Prefer not to say"]];
+function setSex(sex) {
+  state.sex = sex;
+  if (sex !== "female" && state.menstrual?.enabled) state.menstrual.enabled = false; // logged cycle data is kept
+}
+let onboardingAfterSex = "plans";
+function showSexOnboarding(next) {
+  onboardingAfterSex = next;
+  document.querySelector(".onboarding").innerHTML = `<div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual" style="min-height:140px"><div style="text-align:center"><div class="eyebrow">About you</div><h2 style="margin-top:8px">How should Honna set things up?</h2></div></div><p class="onboarding-copy">This shapes your recommended plan and which features you see. You can change it anytime in Profile.</p><div class="onboarding-actions">${sexOptions.map(([value, label]) => `<button class="secondary-button" data-action="choose-sex" data-sex="${value}">${label}</button>`).join("")}</div></div><div><div class="step-dots"><i class="active"></i><i></i><i></i></div><button class="link-button" data-action="onboarding-back">Back</button></div>`;
+}
+function renderAboutYouCard() {
+  if (userSex()) return "";
+  return `<section class="cycle-card cycle-invite"><div><strong>Tell Honna a little about you</strong><small>It shapes recommendations and which features you see. You can change it anytime in Profile.</small></div><div class="cycle-actions sex-actions">${sexOptions.map(([value, label]) => `<button class="secondary-button" data-action="choose-sex" data-sex="${value}">${label}</button>`).join("")}</div></section>`;
+}
 // ---------- Cycle-aware training ----------
 // Everything here is optional and stays on the device. Phases are estimates; adaptations are always offered, never applied.
 const dayMs = 86400000;
@@ -380,13 +415,14 @@ function cycleInsights() {
 }
 // The insight worth raising before today's workout, if any (energy dips first, then lower performance, then symptoms).
 function todaysCycleSuggestion() {
-  const info = menstrual().enabled ? cycleInfo() : null;
+  const info = menstrual().enabled && cycleAvailable() ? cycleInfo() : null;
   if (!info) return null;
   const order = { energy: 0, performance: 1, symptom: 2 };
   return cycleInsights().filter((insight) => insight.bucket === info.bucket && insight.kind in order && !menstrual().dismissedInsights[`${insight.id}:${info.start}`])
     .sort((a, b) => order[a.kind] - order[b.kind] || b.strength - a.strength)[0] || null;
 }
 function renderCycleCard() {
+  if (!cycleAvailable()) return renderAboutYouCard();
   const data = menstrual();
   if (!data.asked) return `<section class="cycle-card cycle-invite"><div><strong>Would you like Honna to adapt your training based on your menstrual cycle?</strong><small>Optional. Honna learns from your own patterns and always asks before changing a workout. Your data stays on this device.</small></div><div class="cycle-actions"><button class="secondary-button" data-action="cycle-decline">Not now</button><button class="primary-button" data-action="cycle-setup">SET IT UP</button></div></section>`;
   if (!data.enabled) return "";
@@ -397,6 +433,7 @@ function renderCycleCard() {
   return `<section class="cycle-card"><button class="cycle-summary" data-action="cycle-details" aria-label="Cycle details"><span class="cycle-day"><b>${info.day}</b><small>cycle day</small></span><span><strong>Day ${info.day}${phase}</strong><small>${next}${data.regularity === "irregular" || info.estimated ? " · estimate" : ""}</small></span></button><button class="secondary-button cycle-log" data-action="log-period">Log period</button></section>`;
 }
 function renderCycleSettings() {
+  if (!cycleAvailable()) return "";
   const data = menstrual();
   const info = data.enabled ? cycleInfo() : null;
   const status = data.enabled ? (info ? `On · cycle day ${info.day}` : "On · log your period to start") : "Off";
@@ -533,12 +570,12 @@ function renderHome() {
     : state.history.filter((item) => new Date(`${item.date}T12:00:00`).getTime() >= weekStart().getTime()).length;
   if (!workout && state.program.days.length) {
     const repeatMessage = state.program.repeatWeekly ? "Your weekly cycle starts again next week." : "This plan is complete. Turn on weekly repeat in Plan if you'd like to reuse it.";
-    return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}, ${escapeHtml(state.name)}</h1></section><div class="surface empty-state"><h3>${state.program.repeatWeekly ? "Your week is complete" : "Plan complete"}</h3><p>${repeatMessage}</p><button class="primary-button" data-tab="Plan">REVIEW MY PLAN</button></div>`;
+    return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section><div class="surface empty-state"><h3>${state.program.repeatWeekly ? "Your week is complete" : "Plan complete"}</h3><p>${repeatMessage}</p><button class="primary-button" data-tab="Plan">REVIEW MY PLAN</button></div>`;
   }
-  if (!workout) return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}, ${escapeHtml(state.name)}</h1></section><div class="surface empty-state"><h3>Your next chapter starts here</h3><p>Create a simple workout plan or import the one you already follow.</p><button class="primary-button" data-action="create-program">CREATE MY PLAN</button></div>`;
+  if (!workout) return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section><div class="surface empty-state"><h3>Your next chapter starts here</h3><p>Start with a recommended plan, create your own, or import the one you already follow.</p><div class="empty-actions"><button class="primary-button" data-action="use-recommended-plan">USE ${escapeHtml(recommendedPlan().name.toUpperCase())}</button><button class="secondary-button" data-action="create-program">Create my plan</button></div></div>`;
   const isToday = scheduledWorkout.day === todayDay();
   const alternatives = Number(state.program.cycleWeeks) > 1 ? [true] : activeCycleDays().filter((day) => day.id !== scheduledWorkout.id && !isWorkoutComplete(day));
-  return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}, ${escapeHtml(state.name)}</h1></section>${renderCycleCard()}
+  return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderCycleCard()}
     <div class="section-heading"><h2>${isToday ? "Today's workout" : "Up next"}</h2><button class="link-button" data-tab="Plan">View plan</button></div>
     <section class="today-card"><div class="today-top"><span class="eyebrow">${escapeHtml(scheduledWorkout.day)} · ${isToday ? "Today" : "Coming up"}${alternate ? " · Changed for today" : ""}</span><div class="today-card-actions"><span class="date-chip">${weekdayNames.includes(scheduledWorkout.day) ? prettyDate(weekdayDate(scheduledWorkout.day).toISOString().slice(0, 10), { month: "short", day: "numeric" }) : "Any day"}</span>${alternatives.length ? `<button class="today-options-button" data-action="change-today-workout" data-scheduled-day-id="${scheduledWorkout.id}" aria-label="More workout options" title="More workout options">${icon("more")}</button>` : ""}</div></div><div class="today-title">${escapeHtml(workout.name)}</div><p class="today-meta">${workout.exercises.length} exercises <span aria-hidden="true">·</span> Approximately ${estimateDuration(workout)} min</p><div class="today-bottom"><div class="avatar-stack"><span class="tiny-dots"><i></i><i></i><i></i></span><span>${escapeHtml(state.program.name)}</span></div><button class="primary-button" data-action="start-workout" data-workout-id="${workout.id}" data-scheduled-workout-id="${scheduledWorkout.id}">START WORKOUT ${icon("arrow")}</button></div></section>
     <section class="section"><div class="section-heading"><h2>Today's flow</h2><span class="eyebrow">${workout.exercises.length} moves</span></div><div class="exercise-preview">${workout.exercises.map((exercise, index) => `<button class="exercise-row" data-action="preview-exercise" data-day-id="${workout.id}" data-exercise-id="${exercise.id}" aria-label="Preview ${escapeHtml(exercise.name)}"><span class="exercise-number">${String(index + 1).padStart(2, "0")}</span><span class="exercise-row-main"><span class="exercise-row-name">${escapeHtml(exercise.name)}</span>${exercise.notes ? `<span class="exercise-row-detail">${escapeHtml(exercise.notes)}</span>` : ""}</span><span class="target-pill">${exercise.sets} × ${exercise.reps || "—"}</span></button>`).join("") || `<div class="empty-state"><p>Add exercises to this workout in your plan.</p></div>`}</div></section>
@@ -593,7 +630,7 @@ function renderChart(records) {
 }
 function renderProfile() {
   const standalone = window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
-  return `<section class="page-intro"><div class="eyebrow">Made for your pace</div><h1>Your space</h1></section><div class="profile-head"><div class="profile-avatar">${escapeHtml(state.name.slice(0, 1).toUpperCase())}</div><div><h3>${escapeHtml(state.name)}</h3><p>${escapeHtml(state.program.name)}</p></div></div><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div><div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div><div class="setting-row"><div><strong>Your name</strong><small>Personalize your home screen</small></div><button class="link-button" data-action="edit-name">${escapeHtml(state.name)} ${icon("edit")}</button></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section>${renderCycleSettings()}<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Honna</button>`}</section><p class="eyebrow" style="margin:22px 0;text-align:center">Honna · Your workouts, in rhythm</p>`;
+  return `<section class="page-intro"><div class="eyebrow">Made for your pace</div><h1>Your space</h1></section><div class="profile-head"><div class="profile-avatar">${escapeHtml((state.name || "H").slice(0, 1).toUpperCase())}</div><div><h3>${escapeHtml(state.name || "Your profile")}</h3><p>${escapeHtml(state.program.name)}</p></div></div><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>About you</strong><small>Shapes recommendations and features</small></div><select class="select-field" data-change="sex" aria-label="About you"><option value="" ${userSex() ? "" : "selected"} disabled>Choose</option>${sexOptions.map(([value, label]) => `<option value="${value}" ${userSex() === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div><div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div><div class="setting-row"><div><strong>Your name</strong><small>Personalize your home screen</small></div><button class="link-button" data-action="edit-name">${escapeHtml(state.name || "Add your name")} ${icon("edit")}</button></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section>${renderCycleSettings()}<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Honna</button>`}</section><p class="eyebrow" style="margin:22px 0;text-align:center">Honna · Your workouts, in rhythm</p>`;
 }
 function renderOnboarding() {
   app.innerHTML = `<div class="onboarding"><div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual"><svg viewBox="0 0 220 190" fill="none" aria-hidden="true"><path d="M45 146c13-38 26-50 49-50 17 0 23 11 34 11 12 0 17-15 28-15 15 0 21 18 25 54" stroke="#60796c" stroke-width="14" stroke-linecap="round"/><path d="M73 81c-2-14 3-27 17-31 14-4 25 5 26 20 1 16-7 29-20 30-12 0-21-7-23-19Z" fill="#bd7f76"/><path d="M59 147h116" stroke="#40594d" stroke-width="8" stroke-linecap="round"/><circle cx="172" cy="48" r="16" fill="#dfb965"/><path d="m169 48 3 3 6-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="eyebrow">A little stronger, each time</div><h1>Welcome to Honna</h1><p class="onboarding-copy">Your workouts. Your progress. All in one place.</p></div><div><div class="step-dots"><i class="active"></i><i></i><i></i></div><div class="onboarding-actions"><button class="primary-button" data-action="onboarding-next">LET'S GET STARTED ${icon("arrow")}</button><button class="link-button" data-action="use-sample">Explore with a sample plan</button></div></div></div>`;
@@ -691,7 +728,7 @@ function finishWorkout() {
   const quickFinish = !workout.exercises.some((exercise) => exercise.sets.some((set) => set.complete));
   if (quickFinish) workout.exercises.forEach(fillAndCompleteSets);
   const finished = { id: workout.id, programDayId: workout.dayId, programWeek: workout.programWeek || 1, cycleId: workout.cycleId, name: workout.name, date: workout.date, duration: Math.max(1, Math.round((Date.now() - workout.startedAt) / 60000)), exercises: workout.exercises.map((exercise) => ({ exerciseId: exercise.exerciseId, name: exercise.name, notes: exercise.notes, sets: exercise.sets.filter((set) => set.complete).map(({ weight, reps }) => ({ weight: Number(weight) || 0, reps: Number(reps) || 0 })) })).filter((exercise) => exercise.sets.length) };
-  const cycleNow = menstrual().enabled ? cycleInfo(workout.date) : null;
+  const cycleNow = menstrual().enabled && cycleAvailable() ? cycleInfo(workout.date) : null;
   if (cycleNow) finished.cycle = { day: cycleNow.day, bucket: cycleNow.bucket };
   if (workout.readiness) finished.readiness = { level: workout.readiness.level, symptoms: workout.readiness.symptoms || [], choice: workout.readiness.choice };
   if (finished.exercises.length) {
@@ -843,7 +880,7 @@ function startNewPlan() {
   state.program = { name: "My Program", repeatWeekly: false, cycleWeeks: 1, activeCycleWeek: 1, cycleId: uid(), cycleStartedAt: todayKey(), days: [] };
   state.todayWorkoutOverride = null; state.activeTab = "Plan";
   save(); render();
-  showSheet("Start your new plan", "Your old plan is deleted. How would you like to add the new one?", `<div class="replacement-options"><button class="replacement-option" data-action="import-pdf"><span><strong>Import a workout PDF</strong><small>We'll read it, then you review</small></span>${icon("arrow")}</button><button class="replacement-option" data-action="new-plan-manual"><span><strong>Build it myself</strong><small>Add workout days one by one</small></span>${icon("arrow")}</button></div>`, `<button class="secondary-button" data-action="close-sheet">Later</button>`);
+  showSheet("Start your new plan", "Your old plan is deleted. How would you like to add the new one?", `<div class="replacement-options"><button class="replacement-option" data-action="use-recommended-plan"><span><strong>Use a recommended plan</strong><small>${escapeHtml(recommendedPlan().name)} · 3 days a week</small></span>${icon("arrow")}</button><button class="replacement-option" data-action="import-pdf"><span><strong>Import a workout PDF</strong><small>We'll read it, then you review</small></span>${icon("arrow")}</button><button class="replacement-option" data-action="new-plan-manual"><span><strong>Build it myself</strong><small>Add workout days one by one</small></span>${icon("arrow")}</button></div>`, `<button class="secondary-button" data-action="close-sheet">Later</button>`);
 }
 function confirmRemovePlanExercise(dayId, exerciseId) {
   const day = state.program.days.find((item) => item.id === dayId);
@@ -1797,6 +1834,7 @@ function bindSelects() {
   app.querySelectorAll("[data-change]").forEach((select) => select.addEventListener("change", () => {
     if (select.dataset.change === "units") { state.units = select.value; if (state.units === "lbs" && Number(state.weightStep) === 2.5) state.weightStep = 5; else if (state.units === "kg" && Number(state.weightStep) === 5) state.weightStep = 2.5; }
     if (select.dataset.change === "weight-step") state.weightStep = Number(select.value);
+    if (select.dataset.change === "sex") { const wasOn = state.menstrual?.enabled; setSex(select.value); if (wasOn && !state.menstrual.enabled) toast("Cycle-aware training is off. Your logged data is kept."); }
     if (select.dataset.change === "progress-exercise") progressSelection = select.value;
     if (select.dataset.change === "repeat-weekly") state.program.repeatWeekly = select.value === "true";
     save(); render();
@@ -1807,15 +1845,24 @@ document.addEventListener("click", (event) => {
   if (button.dataset.tab) { state.activeTab = button.dataset.tab; save(); render(); return; }
   const { action } = button.dataset;
   if (action === "profile") { state.activeTab = "Profile"; save(); render(); }
-  else if (action === "onboarding-next") showPlanChoice();
+  else if (action === "onboarding-next") showSexOnboarding("plans");
+  else if (action === "choose-sex") {
+    setSex(button.dataset.sex);
+    if (!state.onboarded && button.dataset.sex !== "female" && state.name === defaultState().name) state.name = ""; // no placeholder name
+    if (!state.onboarded) {
+      state.program = recommendedPlan(button.dataset.sex); // the starter plan matches; an import or own plan replaces it later
+      if (onboardingAfterSex === "sample") showUnitsOnboarding(); else showPlanChoice();
+    } else { save(); render(); toast("Thanks. You can change this anytime in Profile."); }
+  }
+  else if (action === "use-recommended-plan") { if (!state.program.days.length) { state.program = recommendedPlan(); state.todayWorkoutOverride = null; save(); document.querySelector(".overlay")?.remove(); render(); toast(`${escapeHtml(state.program.name)} is ready.`); } }
   else if (action === "onboarding-back") renderOnboarding();
-  else if (action === "use-sample") { showUnitsOnboarding(); }
+  else if (action === "use-sample") { if (userSex()) showUnitsOnboarding(); else showSexOnboarding("sample"); }
   else if (action === "set-units-onboarding") { state.units = button.dataset.units; state.weightStep = state.units === "kg" ? 2.5 : 5; render(); showUnitsOnboarding(); }
-  else if (action === "complete-onboarding") showCycleOnboarding();
+  else if (action === "complete-onboarding") { if (cycleAvailable()) showCycleOnboarding(); else finishOnboarding(); }
   else if (action === "create-program") { document.querySelector(".overlay")?.remove(); if (!state.onboarded) state.program = { name: "My Program", repeatWeekly: false, days: [] }; state.onboarded = true; state.activeTab = "Plan"; save(); render(); showDayEditor(); }
   else if (action === "start-workout") {
     const start = { workoutId: button.dataset.workoutId, scheduledWorkoutId: button.dataset.scheduledWorkoutId || button.dataset.workoutId };
-    if (menstrual().enabled) showReadinessCheck(start); else launchWorkout(start.workoutId, start.scheduledWorkoutId);
+    if (menstrual().enabled && cycleAvailable()) showReadinessCheck(start); else launchWorkout(start.workoutId, start.scheduledWorkoutId);
   }
   else if (action === "cycle-setup") showCycleSetup();
   else if (action === "save-cycle-setup") saveCycleSetup();
@@ -1914,7 +1961,7 @@ document.addEventListener("click", (event) => {
   else if (action === "save-note") { state.activeWorkout.exercises[Number(button.dataset.exerciseIndex)].notes = document.querySelector("#workout-note").value.trim(); save(); document.querySelector(".overlay")?.remove(); render(); }
   else if (action === "set-theme") { state.theme = button.dataset.themeId; save(); render(); }
   else if (action === "edit-name") showNameEditor();
-  else if (action === "save-name") { state.name = document.querySelector("#user-name").value.trim() || "Sarah"; save(); document.querySelector(".overlay")?.remove(); render(); }
+  else if (action === "save-name") { state.name = document.querySelector("#user-name").value.trim(); save(); document.querySelector(".overlay")?.remove(); render(); }
   else if (action === "export-backup") exportBackup();
   else if (action === "restore-backup") openBackupPicker();
   else if (action === "confirm-restore") {
