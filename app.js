@@ -39,6 +39,8 @@ function applyTheme() {
 }
 const defaultState = () => ({
   version: 1, onboarded: false, name: "Sarah", units: "kg", weightStep: 2.5, theme: "plum", activeTab: "Home", activeWorkout: null, todayWorkoutOverride: null,
+  // Optional cycle-aware training. "asked" records that the opt-in question was answered.
+  menstrual: { asked: false, enabled: false, periodStarts: [], cycleLength: null, periodLength: 5, regularity: "unknown", contraception: "", checkins: [], dismissedInsights: {} },
   program: { name: "Glute Growth", repeatWeekly: true, cycleWeeks: 1, activeCycleWeek: 1, cycleStartedAt: todayKey(), days: [
     { id: "mon", day: "Monday", name: "Lower Body", exercises: [
       { id: "hip", name: "Barbell Hip Thrust", sets: 4, reps: 8, rest: 120, notes: "", equipment: "barbell" },
@@ -276,6 +278,224 @@ function getUpcomingWorkout() {
   });
   return ordered.find((day) => !isWorkoutComplete(day)) || null;
 }
+// ---------- Cycle-aware training ----------
+// Everything here is optional and stays on the device. Phases are estimates; adaptations are always offered, never applied.
+const dayMs = 86400000;
+const dateFromKey = (key) => new Date(`${key}T12:00:00`);
+const keyFromDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const daysBetween = (fromKey, toKey) => Math.round((dateFromKey(toKey) - dateFromKey(fromKey)) / dayMs);
+const symptomOptions = ["Cramps", "Low energy", "Fatigue", "Headache", "Bloating", "Poor sleep", "Sore muscles", "Low mood"];
+const contraceptionOptions = [["", "None"], ["pill", "Pill"], ["hormonal-iud", "Hormonal IUD"], ["implant", "Implant"], ["injection", "Injection"], ["ring-patch", "Ring or patch"], ["private", "Prefer not to say"]];
+// Always the same stored object, with any missing fields filled in (older saves don't have them).
+function menstrual() {
+  if (!state.menstrual || typeof state.menstrual !== "object") state.menstrual = {};
+  for (const [key, value] of Object.entries(defaultState().menstrual)) if (state.menstrual[key] === undefined) state.menstrual[key] = value;
+  return state.menstrual;
+}
+function sortedPeriodStarts() { return [...new Set(menstrual().periodStarts)].filter(Boolean).sort(); }
+function loggedCycleLengths() {
+  const starts = sortedPeriodStarts();
+  return starts.slice(1).map((start, index) => daysBetween(starts[index], start)).filter((length) => length >= 15 && length <= 60);
+}
+// Prefer what the user's own logged cycles show; otherwise their stated length; otherwise a typical 28 days.
+function expectedCycleLength() {
+  const logged = loggedCycleLengths().slice(-6);
+  if (logged.length >= 2) return Math.round(logged.reduce((sum, length) => sum + length, 0) / logged.length);
+  return Number(menstrual().cycleLength) || logged[0] || 28;
+}
+function hormonalContraception() { return ["pill", "hormonal-iud", "implant", "injection", "ring-patch"].includes(menstrual().contraception); }
+// Where a date sits in the cycle: day number, phase bucket and which logged cycle it belongs to.
+function cycleInfo(dateKey = todayKey()) {
+  const starts = sortedPeriodStarts().filter((start) => start <= dateKey);
+  if (!starts.length) return null;
+  const start = starts.at(-1);
+  const nextLogged = sortedPeriodStarts().find((item) => item > dateKey);
+  const length = nextLogged ? daysBetween(start, nextLogged) : expectedCycleLength();
+  const day = daysBetween(start, dateKey) + 1;
+  const periodLength = Math.max(2, Number(menstrual().periodLength) || 5);
+  const ovulation = Math.max(periodLength + 3, length - 14);
+  let bucket;
+  if (day <= 2) bucket = "period-early";
+  else if (day <= periodLength) bucket = "period-late";
+  else if (day > length) bucket = "late";
+  else if (day > length - 5) bucket = "premenstrual";
+  else if (day >= ovulation - 1 && day <= ovulation + 1) bucket = "ovulation";
+  else if (day < ovulation - 1) bucket = "follicular";
+  else bucket = "luteal";
+  const phase = { "period-early": "Period", "period-late": "Period", follicular: "Follicular phase", ovulation: "Around ovulation", luteal: "Luteal phase", premenstrual: "Before your period", late: "Period expected" }[bucket];
+  const nextPeriod = keyFromDate(new Date(dateFromKey(start).getTime() + length * dayMs));
+  return { start, day, length, bucket, phase, nextPeriod, cycleIndex: starts.length - 1, estimated: !nextLogged };
+}
+const bucketPhrases = { "period-early": "the first two days of your period", "period-late": "the later days of your period", follicular: "the days after your period", ovulation: "the days around ovulation", luteal: "the second half of your cycle", premenstrual: "the last few days before your period", late: "the days when your period is late" };
+// A lift's strength score: the best set's estimated one-rep max.
+const setScore = (set) => (Number(set.weight) || 0) * (1 + (Number(set.reps) || 0) / 30);
+// Learn recurring patterns from the user's own check-ins and workouts. A pattern needs at least two different cycles.
+function cycleInsights() {
+  const data = menstrual();
+  // Only self-rated check-ins count (accepting a suggestion without rating must not reinforce the suggestion).
+  const checkins = data.checkins.filter((checkin) => ["good", "off", "rough"].includes(checkin.level)).map((checkin) => ({ ...checkin, info: cycleInfo(checkin.date) })).filter((checkin) => checkin.info);
+  const insights = [];
+  if (checkins.length >= 4) {
+    const lowOverall = checkins.filter((checkin) => checkin.level !== "good").length / checkins.length;
+    for (const bucket of Object.keys(bucketPhrases)) {
+      const inBucket = checkins.filter((checkin) => checkin.info.bucket === bucket);
+      const cycles = new Set(inBucket.map((checkin) => checkin.info.cycleIndex));
+      if (inBucket.length < 2 || cycles.size < 2) continue;
+      const low = inBucket.filter((checkin) => checkin.level !== "good");
+      const lowCycles = new Set(low.map((checkin) => checkin.info.cycleIndex));
+      if (low.length / inBucket.length >= 0.6 && lowCycles.size >= 2 && low.length / inBucket.length >= lowOverall + 0.2) {
+        insights.push({ id: `energy-${bucket}`, bucket, kind: "energy", strength: low.length / inBucket.length, cycles: lowCycles.size, text: `You usually report lower energy during ${bucketPhrases[bucket]}.` });
+      }
+      for (const symptom of symptomOptions) {
+        const symptomCycles = new Set(inBucket.filter((checkin) => checkin.symptoms?.includes(symptom)).map((checkin) => checkin.info.cycleIndex));
+        if (symptomCycles.size >= 2 && !insights.some((insight) => insight.id === `energy-${bucket}`)) {
+          insights.push({ id: `symptom-${bucket}-${symptom}`, bucket, kind: "symptom", strength: symptomCycles.size / cycles.size, cycles: symptomCycles.size, text: `You've noted ${symptom.toLowerCase()} during ${bucketPhrases[bucket]} in ${symptomCycles.size} cycles.` });
+        }
+      }
+    }
+  }
+  // Performance: compare each lift's best set to that lift's own typical level (median), per cycle part.
+  const workouts = state.history.filter((workout) => workout.cycle?.day && workout.readiness?.choice !== "light");
+  const scoresByLift = {};
+  for (const workout of workouts) for (const exercise of workout.exercises) {
+    const best = Math.max(0, ...exercise.sets.map(setScore));
+    if (best > 0) (scoresByLift[exercise.name.toLowerCase()] ||= []).push({ best, workout });
+  }
+  const ratios = [];
+  for (const entries of Object.values(scoresByLift)) {
+    if (entries.length < 4) continue;
+    const sorted = entries.map((entry) => entry.best).sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    for (const entry of entries) { const info = cycleInfo(entry.workout.date); if (info) ratios.push({ ratio: entry.best / median, bucket: info.bucket, cycleIndex: info.cycleIndex }); }
+  }
+  for (const bucket of Object.keys(bucketPhrases)) {
+    const inBucket = ratios.filter((item) => item.bucket === bucket);
+    const cycles = new Set(inBucket.map((item) => item.cycleIndex));
+    if (inBucket.length < 4 || cycles.size < 2) continue;
+    const average = inBucket.reduce((sum, item) => sum + item.ratio, 0) / inBucket.length;
+    if (average <= 0.94) insights.push({ id: `perf-low-${bucket}`, bucket, kind: "performance", strength: 1 - average, cycles: cycles.size, text: `Your lifts tend to be about ${Math.round((1 - average) * 100)}% lower than usual during ${bucketPhrases[bucket]}.` });
+    if (average >= 1.04) insights.push({ id: `perf-high-${bucket}`, bucket, kind: "strong", strength: average - 1, cycles: cycles.size, text: `You tend to lift about ${Math.round((average - 1) * 100)}% more than usual during ${bucketPhrases[bucket]}.` });
+  }
+  return insights;
+}
+// The insight worth raising before today's workout, if any (energy dips first, then lower performance, then symptoms).
+function todaysCycleSuggestion() {
+  const info = menstrual().enabled ? cycleInfo() : null;
+  if (!info) return null;
+  const order = { energy: 0, performance: 1, symptom: 2 };
+  return cycleInsights().filter((insight) => insight.bucket === info.bucket && insight.kind in order && !menstrual().dismissedInsights[`${insight.id}:${info.start}`])
+    .sort((a, b) => order[a.kind] - order[b.kind] || b.strength - a.strength)[0] || null;
+}
+function renderCycleCard() {
+  const data = menstrual();
+  if (!data.asked) return `<section class="cycle-card cycle-invite"><div><strong>Would you like Honna to adapt your training based on your menstrual cycle?</strong><small>Optional. Honna learns from your own patterns and always asks before changing a workout. Your data stays on this device.</small></div><div class="cycle-actions"><button class="secondary-button" data-action="cycle-decline">Not now</button><button class="primary-button" data-action="cycle-setup">SET IT UP</button></div></section>`;
+  if (!data.enabled) return "";
+  const info = cycleInfo();
+  if (!info) return `<section class="cycle-card"><div><strong>Cycle tracking is on</strong><small>Log when your last period started to see your cycle day.</small></div><button class="secondary-button" data-action="log-period">Log period</button></section>`;
+  const next = info.day > info.length ? `Period may be ${info.day - info.length} ${info.day - info.length === 1 ? "day" : "days"} late` : `Next period ≈ ${prettyDate(info.nextPeriod)}`;
+  const phase = hormonalContraception() && !info.bucket.startsWith("period") ? "" : ` · ${info.phase}`;
+  return `<section class="cycle-card"><button class="cycle-summary" data-action="cycle-details" aria-label="Cycle details"><span class="cycle-day"><b>${info.day}</b><small>cycle day</small></span><span><strong>Day ${info.day}${phase}</strong><small>${next}${data.regularity === "irregular" || info.estimated ? " · estimate" : ""}</small></span></button><button class="secondary-button cycle-log" data-action="log-period">Log period</button></section>`;
+}
+function renderCycleSettings() {
+  const data = menstrual();
+  const info = data.enabled ? cycleInfo() : null;
+  const status = data.enabled ? (info ? `On · cycle day ${info.day}` : "On · log your period to start") : "Off";
+  return `<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Cycle-aware training</div><div class="setting-row"><div><strong>Adapt training to my cycle</strong><small>${status}. Honna only suggests changes; you decide.</small></div>${data.enabled ? `<button class="link-button" data-action="cycle-disable">Turn off</button>` : `<button class="link-button" data-action="cycle-setup">Turn on ${icon("arrow")}</button>`}</div>${data.enabled ? `<div class="setting-row"><div><strong>My cycle & what Honna learned</strong><small>${data.checkins.length} check-ins · ${sortedPeriodStarts().length} periods logged</small></div><button class="link-button" data-action="cycle-details">View ${icon("arrow")}</button></div>` : ""}</section>`;
+}
+function showCycleSetup() {
+  const data = menstrual();
+  const lastStart = sortedPeriodStarts().at(-1) || "";
+  const regularity = [["regular", "Regular"], ["irregular", "Irregular"], ["unknown", "Not sure"]].map(([value, label]) => `<option value="${value}" ${data.regularity === value ? "selected" : ""}>${label}</option>`).join("");
+  const contraception = contraceptionOptions.map(([value, label]) => `<option value="${value}" ${data.contraception === value ? "selected" : ""}>${label}</option>`).join("");
+  showSheet("Cycle-aware training", "Honna uses this to estimate your cycle day. Training only changes when you say so. Everything stays on this device.", `<label class="field"><span class="field-label">When did your last period start?</span><input class="text-field" type="date" id="cycle-last-start" max="${todayKey()}" value="${lastStart}"></label><div class="counter-row"><label class="field"><span class="field-label">Typical cycle length (days)</span><input class="number-field" type="number" id="cycle-length" min="15" max="60" placeholder="e.g. 28" value="${data.cycleLength || ""}"></label><label class="field"><span class="field-label">Period length (days)</span><input class="number-field" type="number" id="cycle-period-length" min="1" max="12" value="${data.periodLength || 5}"></label></div><label class="check-field"><input type="checkbox" id="cycle-length-unknown" ${data.asked && !data.cycleLength ? "checked" : ""}><span>I don't know my cycle length</span></label><div class="counter-row"><label class="field"><span class="field-label">My cycle is</span><select class="select-field" id="cycle-regularity">${regularity}</select></label><label class="field"><span class="field-label">Hormonal contraception <small>(optional)</small></span><select class="select-field" id="cycle-contraception">${contraception}</select></label></div>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="save-cycle-setup">SAVE</button>`);
+}
+function saveCycleSetup() {
+  const data = menstrual();
+  const lastStart = document.querySelector("#cycle-last-start").value;
+  if (!lastStart || lastStart > todayKey()) { document.querySelector("#cycle-last-start").focus(); toast("Add when your last period started."); return; }
+  const unknown = document.querySelector("#cycle-length-unknown").checked;
+  const length = Number(document.querySelector("#cycle-length").value);
+  Object.assign(data, {
+    asked: true, enabled: true,
+    cycleLength: !unknown && length >= 15 && length <= 60 ? length : null,
+    periodLength: Math.min(12, Math.max(1, Number(document.querySelector("#cycle-period-length").value) || 5)),
+    regularity: document.querySelector("#cycle-regularity").value,
+    contraception: document.querySelector("#cycle-contraception").value,
+  });
+  addPeriodStart(lastStart);
+  save(); document.querySelector(".overlay")?.remove(); render(); toast("Cycle-aware training is on.");
+}
+// A new start within 10 days of a logged one is treated as a correction of that one.
+function addPeriodStart(dateKey) {
+  const data = menstrual();
+  data.periodStarts = sortedPeriodStarts().filter((start) => Math.abs(daysBetween(start, dateKey)) > 10);
+  data.periodStarts.push(dateKey);
+  data.periodStarts.sort();
+}
+function showLogPeriod() {
+  const info = cycleInfo();
+  showSheet("Log your period", info ? `Your last logged start was ${prettyDate(info.start, { month: "long", day: "numeric" })}.` : "", `<label class="field"><span class="field-label">Period started on</span><input class="text-field" type="date" id="period-start" max="${todayKey()}" value="${todayKey()}"></label>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="save-period">SAVE</button>`);
+}
+function showCycleDetails() {
+  const data = menstrual();
+  const info = cycleInfo();
+  const insights = cycleInsights();
+  const starts = sortedPeriodStarts().slice(-6).reverse().map((start) => `<li>${prettyDate(start, { month: "short", day: "numeric", year: "numeric" })}</li>`).join("");
+  const learned = insights.length ? `<ul class="insight-list">${insights.map((insight) => `<li>${escapeHtml(insight.text)} <small>(${insight.cycles} cycles)</small></li>`).join("")}</ul>` : `<p class="muted-copy">Nothing yet. Honna looks for patterns that repeat in at least two cycles, using your check-ins before workouts and the weights and reps you log. Keep checking in and logging your period.</p>`;
+  const lengths = loggedCycleLengths();
+  showSheet("Your cycle", info ? `Day ${info.day} of about ${info.length} · ${hormonalContraception() ? "hormonal contraception noted" : info.phase}` : "No period logged yet.", `<div class="preview-block"><div class="field-label">What Honna has learned</div>${learned}</div><div class="preview-block"><div class="field-label">Logged period starts</div>${starts ? `<ul class="plain-list">${starts}</ul>` : "<p>None yet.</p>"}${lengths.length ? `<p class="muted-copy">Your logged cycles: ${lengths.slice(-6).join(", ")} days.</p>` : ""}</div><div class="preview-block"><div class="field-label">Check-ins</div><p class="muted-copy">${data.checkins.length} before workouts so far.</p></div>`, `<button class="secondary-button" data-action="cycle-setup">Edit settings</button><button class="primary-button" data-action="log-period">LOG PERIOD</button>`);
+}
+// Quick readiness check before a workout. Nothing changes unless the user picks an adapted option.
+let pendingWorkoutStart = null;
+function showReadinessCheck(start, level = null, symptoms = []) {
+  pendingWorkoutStart = { ...start, level, symptoms };
+  const info = cycleInfo();
+  const suggestion = todaysCycleSuggestion();
+  const insight = suggestion && !level ? `<div class="cycle-insight"><p>${escapeHtml(suggestion.text)} Would you like me to adapt today’s workout?</p><div class="cycle-actions"><button class="secondary-button" data-action="insight-no">Keep my plan</button><button class="primary-button" data-action="insight-yes">ADAPT</button></div></div>` : "";
+  const chip = (symptom) => `<button class="symptom-chip${symptoms.includes(symptom) ? " selected" : ""}" data-action="toggle-symptom" data-symptom="${symptom}" aria-pressed="${symptoms.includes(symptom)}">${symptom}</button>`;
+  const levels = [["good", "🟢", "Feeling good", "Do the planned workout"], ["off", "🟡", "Feeling off", "See an adapted option"], ["rough", "🔴", "Feeling rough", "See a lighter session"]];
+  const options = levels.map(([value, dot, label, hint]) => `<button class="readiness-option${level === value ? " selected" : ""}" data-action="readiness" data-level="${value}"><span class="readiness-dot" aria-hidden="true">${dot}</span><span><strong>${label}</strong><small>${hint}</small></span></button>`).join("");
+  const title = info ? `Day ${info.day}${hormonalContraception() && !info.bucket.startsWith("period") ? "" : ` · ${info.phase}`}` : "";
+  showSheet("How are you feeling today?", title, `${insight}<div class="readiness-options">${options}</div><div class="field-label" style="margin-top:14px">Anything to note? <small>(optional)</small></div><div class="symptom-chips">${symptomOptions.map(chip).join("")}</div>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button>`);
+}
+function recordCheckin(level, symptoms, choice) {
+  const info = cycleInfo();
+  const checkin = { date: todayKey(), level, symptoms, choice, cycleDay: info?.day || null, bucket: info?.bucket || null };
+  const data = menstrual();
+  data.checkins = [...data.checkins.filter((item) => item.date !== checkin.date), checkin].slice(-400);
+  return checkin;
+}
+function showAdaptationOffer(level) {
+  const light = level === "rough";
+  const what = light ? "About half the sets, weights around 10% lighter and longer rest. A lighter session still counts as today's workout." : "One set fewer on each exercise (never below one), same weights. Stop each set a little further from failure.";
+  showSheet(light ? "Lighter session?" : "Adapted workout?", what, "", `<button class="secondary-button" data-action="adapt-choice" data-choice="normal">Keep my plan</button><button class="primary-button" data-action="adapt-choice" data-choice="${light ? "light" : "adapted"}">${light ? "GO LIGHTER" : "USE ADAPTED"}</button>`);
+}
+// Apply the chosen adaptation to today's session only; the plan is never changed.
+function applyAdaptation(choice) {
+  if (choice === "normal") return;
+  for (const exercise of state.activeWorkout.exercises) {
+    const keep = choice === "light" ? Math.max(1, Math.ceil(exercise.sets.length / 2)) : Math.max(1, exercise.sets.length - 1);
+    exercise.sets = exercise.sets.slice(0, keep);
+    exercise.targetSets = Math.min(exercise.targetSets, keep);
+    if (choice === "light") {
+      const step = Number(state.weightStep) || 2.5;
+      exercise.sets.forEach((set) => { if (Number(set.weight) > 0) set.weight = Math.max(0, Math.round(Number(set.weight) * 0.9 / step) * step); });
+      exercise.rest = Math.round((Number(exercise.rest) || 60) * 1.3);
+    }
+    exercise.notes = [choice === "light" ? "Lighter session today" : "Adapted today: aim ~1–2 reps further from failure", exercise.notes].filter(Boolean).join(" · ");
+  }
+}
+function beginCheckedWorkout(choice) {
+  const start = pendingWorkoutStart;
+  if (!start) return;
+  pendingWorkoutStart = null;
+  const checkin = recordCheckin(start.level || "good", start.symptoms || [], choice);
+  document.querySelector(".overlay")?.remove();
+  launchWorkout(start.workoutId, start.scheduledWorkoutId, { ...checkin, choice });
+  applyAdaptation(choice);
+  save(); render();
+  if (choice !== "normal") toast(choice === "light" ? "Lighter session ready. Your plan is unchanged." : "Adapted workout ready. Your plan is unchanged.");
+}
 function render() {
   applyTheme();
   if (!state.onboarded) return renderOnboarding();
@@ -318,7 +538,7 @@ function renderHome() {
   if (!workout) return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}, ${escapeHtml(state.name)}</h1></section><div class="surface empty-state"><h3>Your next chapter starts here</h3><p>Create a simple workout plan or import the one you already follow.</p><button class="primary-button" data-action="create-program">CREATE MY PLAN</button></div>`;
   const isToday = scheduledWorkout.day === todayDay();
   const alternatives = Number(state.program.cycleWeeks) > 1 ? [true] : activeCycleDays().filter((day) => day.id !== scheduledWorkout.id && !isWorkoutComplete(day));
-  return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}, ${escapeHtml(state.name)}</h1></section>
+  return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}, ${escapeHtml(state.name)}</h1></section>${renderCycleCard()}
     <div class="section-heading"><h2>${isToday ? "Today's workout" : "Up next"}</h2><button class="link-button" data-tab="Plan">View plan</button></div>
     <section class="today-card"><div class="today-top"><span class="eyebrow">${escapeHtml(scheduledWorkout.day)} · ${isToday ? "Today" : "Coming up"}${alternate ? " · Changed for today" : ""}</span><div class="today-card-actions"><span class="date-chip">${weekdayNames.includes(scheduledWorkout.day) ? prettyDate(weekdayDate(scheduledWorkout.day).toISOString().slice(0, 10), { month: "short", day: "numeric" }) : "Any day"}</span>${alternatives.length ? `<button class="today-options-button" data-action="change-today-workout" data-scheduled-day-id="${scheduledWorkout.id}" aria-label="More workout options" title="More workout options">${icon("more")}</button>` : ""}</div></div><div class="today-title">${escapeHtml(workout.name)}</div><p class="today-meta">${workout.exercises.length} exercises <span aria-hidden="true">·</span> Approximately ${estimateDuration(workout)} min</p><div class="today-bottom"><div class="avatar-stack"><span class="tiny-dots"><i></i><i></i><i></i></span><span>${escapeHtml(state.program.name)}</span></div><button class="primary-button" data-action="start-workout" data-workout-id="${workout.id}" data-scheduled-workout-id="${scheduledWorkout.id}">START WORKOUT ${icon("arrow")}</button></div></section>
     <section class="section"><div class="section-heading"><h2>Today's flow</h2><span class="eyebrow">${workout.exercises.length} moves</span></div><div class="exercise-preview">${workout.exercises.map((exercise, index) => `<button class="exercise-row" data-action="preview-exercise" data-day-id="${workout.id}" data-exercise-id="${exercise.id}" aria-label="Preview ${escapeHtml(exercise.name)}"><span class="exercise-number">${String(index + 1).padStart(2, "0")}</span><span class="exercise-row-main"><span class="exercise-row-name">${escapeHtml(exercise.name)}</span>${exercise.notes ? `<span class="exercise-row-detail">${escapeHtml(exercise.notes)}</span>` : ""}</span><span class="target-pill">${exercise.sets} × ${exercise.reps || "—"}</span></button>`).join("") || `<div class="empty-state"><p>Add exercises to this workout in your plan.</p></div>`}</div></section>
@@ -373,7 +593,7 @@ function renderChart(records) {
 }
 function renderProfile() {
   const standalone = window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
-  return `<section class="page-intro"><div class="eyebrow">Made for your pace</div><h1>Your space</h1></section><div class="profile-head"><div class="profile-avatar">${escapeHtml(state.name.slice(0, 1).toUpperCase())}</div><div><h3>${escapeHtml(state.name)}</h3><p>${escapeHtml(state.program.name)}</p></div></div><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div><div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div><div class="setting-row"><div><strong>Your name</strong><small>Personalize your home screen</small></div><button class="link-button" data-action="edit-name">${escapeHtml(state.name)} ${icon("edit")}</button></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Honna</button>`}</section><p class="eyebrow" style="margin:22px 0;text-align:center">Honna · Your workouts, in rhythm</p>`;
+  return `<section class="page-intro"><div class="eyebrow">Made for your pace</div><h1>Your space</h1></section><div class="profile-head"><div class="profile-avatar">${escapeHtml(state.name.slice(0, 1).toUpperCase())}</div><div><h3>${escapeHtml(state.name)}</h3><p>${escapeHtml(state.program.name)}</p></div></div><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div><div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div><div class="setting-row"><div><strong>Your name</strong><small>Personalize your home screen</small></div><button class="link-button" data-action="edit-name">${escapeHtml(state.name)} ${icon("edit")}</button></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section>${renderCycleSettings()}<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Honna</button>`}</section><p class="eyebrow" style="margin:22px 0;text-align:center">Honna · Your workouts, in rhythm</p>`;
 }
 function renderOnboarding() {
   app.innerHTML = `<div class="onboarding"><div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual"><svg viewBox="0 0 220 190" fill="none" aria-hidden="true"><path d="M45 146c13-38 26-50 49-50 17 0 23 11 34 11 12 0 17-15 28-15 15 0 21 18 25 54" stroke="#60796c" stroke-width="14" stroke-linecap="round"/><path d="M73 81c-2-14 3-27 17-31 14-4 25 5 26 20 1 16-7 29-20 30-12 0-21-7-23-19Z" fill="#bd7f76"/><path d="M59 147h116" stroke="#40594d" stroke-width="8" stroke-linecap="round"/><circle cx="172" cy="48" r="16" fill="#dfb965"/><path d="m169 48 3 3 6-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="eyebrow">A little stronger, each time</div><h1>Welcome to Honna</h1><p class="onboarding-copy">Your workouts. Your progress. All in one place.</p></div><div><div class="step-dots"><i class="active"></i><i></i><i></i></div><div class="onboarding-actions"><button class="primary-button" data-action="onboarding-next">LET'S GET STARTED ${icon("arrow")}</button><button class="link-button" data-action="use-sample">Explore with a sample plan</button></div></div></div>`;
@@ -383,6 +603,15 @@ function activeExerciseFrom(exercise) {
   const previous = previousExercise(exercise);
   const count = Math.max(Number(exercise.sets) || 1, previous?.sets?.length || 0);
   return { exerciseId: exercise.id, name: exercise.name, targetSets: Number(exercise.sets) || 1, targetReps: Number(exercise.reps) || 0, rest: Number(exercise.rest) || 0, notes: exercise.notes || "", sets: Array.from({ length: count }, (_, index) => ({ weight: previous?.sets?.[index]?.weight ?? previous?.sets?.at(-1)?.weight ?? "", reps: previous?.sets?.[index]?.reps ?? previous?.sets?.at(-1)?.reps ?? (Number(exercise.reps) || 0), complete: false })) };
+}
+function launchWorkout(workoutId, scheduledWorkoutId = workoutId, readiness = null) {
+  const workout = state.program.days.find((day) => day.id === workoutId);
+  if (!workout) return;
+  const scheduledWorkout = state.program.days.find((day) => day.id === scheduledWorkoutId);
+  const pinned = Boolean(todayOverride()?.pinned);
+  state.todayWorkoutOverride = scheduledWorkoutId === workout.id && !pinned ? null : { date: todayKey(), scheduledDayId: scheduledWorkoutId, workoutId: workout.id, pinned };
+  startWorkout(workout, scheduledWorkoutId, scheduledWorkout?.programWeek || workout.programWeek || 1);
+  if (readiness) state.activeWorkout.readiness = readiness;
 }
 function startWorkout(workout, scheduledWorkoutId = workout.id, scheduledProgramWeek = workout.programWeek || 1) {
   state.activeWorkout = { id: uid(), dayId: scheduledWorkoutId, workoutId: workout.id, programWeek: scheduledProgramWeek, cycleId: state.program.cycleId, name: workout.name, date: todayKey(), startedAt: Date.now(), exercises: workout.exercises.map(activeExerciseFrom) };
@@ -462,6 +691,9 @@ function finishWorkout() {
   const quickFinish = !workout.exercises.some((exercise) => exercise.sets.some((set) => set.complete));
   if (quickFinish) workout.exercises.forEach(fillAndCompleteSets);
   const finished = { id: workout.id, programDayId: workout.dayId, programWeek: workout.programWeek || 1, cycleId: workout.cycleId, name: workout.name, date: workout.date, duration: Math.max(1, Math.round((Date.now() - workout.startedAt) / 60000)), exercises: workout.exercises.map((exercise) => ({ exerciseId: exercise.exerciseId, name: exercise.name, notes: exercise.notes, sets: exercise.sets.filter((set) => set.complete).map(({ weight, reps }) => ({ weight: Number(weight) || 0, reps: Number(reps) || 0 })) })).filter((exercise) => exercise.sets.length) };
+  const cycleNow = menstrual().enabled ? cycleInfo(workout.date) : null;
+  if (cycleNow) finished.cycle = { day: cycleNow.day, bucket: cycleNow.bucket };
+  if (workout.readiness) finished.readiness = { level: workout.readiness.level, symptoms: workout.readiness.symptoms || [], choice: workout.readiness.choice };
   if (finished.exercises.length) {
     state.history.unshift(finished);
     state.history = state.history.slice(0, 250);
@@ -703,6 +935,9 @@ function showPlanChoice() {
 }
 function useSamplePlan() {
   state.onboarded = true; state.activeTab = "Home"; save(); render();
+}
+function showCycleOnboarding() {
+  document.querySelector(".onboarding").innerHTML = `<div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual" style="min-height:140px"><div style="text-align:center"><div class="eyebrow">Optional</div><h2 style="margin-top:8px">Train with your cycle</h2></div></div><p class="onboarding-copy">Would you like Honna to adapt your training based on your menstrual cycle? It learns from your own patterns and always asks before changing a workout. Your data stays on this device.</p></div><div><div class="onboarding-actions"><button class="primary-button" data-action="cycle-onboarding-yes">YES, SET IT UP ${icon("arrow")}</button><button class="secondary-button" data-action="cycle-onboarding-no">Not now</button></div></div>`;
 }
 function finishOnboarding() { state.onboarded = true; state.activeTab = "Home"; save(); render(); }
 async function openPdfPicker() {
@@ -1576,18 +1811,37 @@ document.addEventListener("click", (event) => {
   else if (action === "onboarding-back") renderOnboarding();
   else if (action === "use-sample") { showUnitsOnboarding(); }
   else if (action === "set-units-onboarding") { state.units = button.dataset.units; state.weightStep = state.units === "kg" ? 2.5 : 5; render(); showUnitsOnboarding(); }
-  else if (action === "complete-onboarding") finishOnboarding();
+  else if (action === "complete-onboarding") showCycleOnboarding();
   else if (action === "create-program") { document.querySelector(".overlay")?.remove(); if (!state.onboarded) state.program = { name: "My Program", repeatWeekly: false, days: [] }; state.onboarded = true; state.activeTab = "Plan"; save(); render(); showDayEditor(); }
   else if (action === "start-workout") {
-    const workout = state.program.days.find((day) => day.id === button.dataset.workoutId);
-    const scheduledWorkoutId = button.dataset.scheduledWorkoutId || button.dataset.workoutId;
-    const scheduledWorkout = state.program.days.find((day) => day.id === scheduledWorkoutId);
-    if (workout) {
-      const pinned = Boolean(todayOverride()?.pinned);
-      state.todayWorkoutOverride = scheduledWorkoutId === workout.id && !pinned ? null : { date: todayKey(), scheduledDayId: scheduledWorkoutId, workoutId: workout.id, pinned };
-      startWorkout(workout, scheduledWorkoutId, scheduledWorkout?.programWeek || workout.programWeek || 1);
-    }
+    const start = { workoutId: button.dataset.workoutId, scheduledWorkoutId: button.dataset.scheduledWorkoutId || button.dataset.workoutId };
+    if (menstrual().enabled) showReadinessCheck(start); else launchWorkout(start.workoutId, start.scheduledWorkoutId);
   }
+  else if (action === "cycle-setup") showCycleSetup();
+  else if (action === "save-cycle-setup") saveCycleSetup();
+  else if (action === "cycle-decline") { menstrual().asked = true; save(); render(); toast("No problem. You can turn it on anytime in Profile."); }
+  else if (action === "cycle-disable") { menstrual().enabled = false; save(); render(); toast("Cycle-aware training is off. Your logged data is kept."); }
+  else if (action === "log-period") showLogPeriod();
+  else if (action === "save-period") { const value = document.querySelector("#period-start")?.value; if (!value || value > todayKey()) return; addPeriodStart(value); save(); document.querySelector(".overlay")?.remove(); render(); toast("Period logged."); }
+  else if (action === "cycle-details") showCycleDetails();
+  else if (action === "toggle-symptom" && pendingWorkoutStart) {
+    const symptoms = new Set(pendingWorkoutStart.symptoms || []);
+    if (symptoms.has(button.dataset.symptom)) symptoms.delete(button.dataset.symptom); else symptoms.add(button.dataset.symptom);
+    showReadinessCheck(pendingWorkoutStart, pendingWorkoutStart.level, [...symptoms]);
+  }
+  else if (action === "readiness" && pendingWorkoutStart) {
+    pendingWorkoutStart.level = button.dataset.level;
+    if (button.dataset.level === "good") beginCheckedWorkout("normal"); else showAdaptationOffer(button.dataset.level);
+  }
+  else if (action === "adapt-choice") beginCheckedWorkout(button.dataset.choice);
+  else if (action === "insight-yes" && pendingWorkoutStart) { pendingWorkoutStart.level = "unrated"; beginCheckedWorkout("adapted"); }
+  else if (action === "insight-no" && pendingWorkoutStart) {
+    const suggestion = todaysCycleSuggestion();
+    if (suggestion) { menstrual().dismissedInsights[`${suggestion.id}:${cycleInfo().start}`] = true; save(); }
+    showReadinessCheck(pendingWorkoutStart, null, pendingWorkoutStart.symptoms || []);
+  }
+  else if (action === "cycle-onboarding-yes") { finishOnboarding(); showCycleSetup(); }
+  else if (action === "cycle-onboarding-no") { menstrual().asked = true; finishOnboarding(); }
   else if (action === "change-today-workout") showWorkoutDayPicker(button.dataset.scheduledDayId);
   else if (action === "choose-today-workout") chooseTodayWorkout(button.dataset.scheduledDayId, button.dataset.workoutId);
   else if (action === "picker-week") showWorkoutDayPicker(button.dataset.scheduledDayId, Number(button.dataset.week));
