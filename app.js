@@ -608,21 +608,24 @@ async function openPdfPicker() {
   input.addEventListener("change", async () => {
     const file = input.files?.[0]; if (!file) return;
     try {
-      showSheet("Reading your plan", "Pulling the text from your PDF. Nothing is saved until you confirm.", `<div class="empty-state"><p>This usually takes a few seconds…</p></div>`);
-      const extracted = await extractPdfText(file);
+      showSheet("Reading your plan", "Pulling the text from your PDF. Nothing is saved until you confirm.", `<div class="empty-state"><p id="import-progress">This usually takes a few seconds…</p></div>`);
+      const extracted = await extractPdfText(file, (message) => {
+        const progress = document.querySelector("#import-progress");
+        if (progress) progress.textContent = `${message} This PDF is made of images, so each page is read like a photo — it can take a few minutes.`;
+      });
       importDraft = parseWorkoutPdf(extracted.pages, extracted.text, file.name);
       showImportReview(importProgramName.endsWith("Week 1") ? `${file.name} · Week 1 only` : file.name);
     } catch (error) { document.querySelector(".overlay")?.remove(); showSheet("Couldn't read this PDF", "Try a text-based PDF, or add your plan manually.", `<div class="empty-state"><p>${escapeHtml(error.message || "This PDF could not be read.")}</p></div>`, `<button class="secondary-button" data-action="close-sheet">Close</button><button class="primary-button" data-action="create-program">CREATE MY PLAN</button>`); }
   });
   input.click();
 }
-async function extractPdfText(file) {
+async function extractPdfText(file, onProgress = () => { }) {
   const pdfjs = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
-  const document = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+  const pdfDocument = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
   const pages = [];
-  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
+  for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+    const page = await pdfDocument.getPage(pageNumber);
     const content = await page.getTextContent();
     const items = content.items.filter((item) => item.str?.trim()).map((item) => ({
       x: item.transform?.[4] || 0,
@@ -633,8 +636,247 @@ async function extractPdfText(file) {
     }));
     pages.push({ number: pageNumber, width: page.getViewport({ scale: 1 }).width, items });
   }
+  // Image-only (scanned or flattened) PDFs have no text layer: read them with OCR instead.
+  const characters = pages.reduce((total, page) => total + page.items.reduce((sum, item) => sum + item.text.length, 0), 0);
+  if (characters < pdfDocument.numPages * 20) await ocrPdfPages(pdfDocument, pages, onProgress);
   const text = pages.map((page) => pdfTextRows(page.items).map((row) => row.items.map((item) => item.text).join(" ")).join("\n")).join("\n");
   return { pages, text };
+}
+let tesseractLoader = null;
+function loadTesseract() {
+  tesseractLoader ||= new Promise((resolve, reject) => {
+    if (window.Tesseract) { resolve(window.Tesseract); return; }
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+    script.onload = () => resolve(window.Tesseract);
+    script.onerror = () => { tesseractLoader = null; reject(new Error("Couldn't load the text recognizer. Check your internet connection and try again.")); };
+    document.head.append(script);
+  });
+  return tesseractLoader;
+}
+// Black text on white for OCR: marks pixels that stand out from their neighbourhood (dark-on-light and
+// light-on-dark alike), then erases long straight runs — table borders and link underlines.
+function prepareOcrCanvas(source, textHeight) {
+  const { width, height } = source;
+  const context = source.getContext("2d", { willReadFrequently: true });
+  const image = context.getImageData(0, 0, width, height);
+  const pixels = image.data;
+  const luminance = new Float32Array(width * height);
+  for (let index = 0; index < width * height; index += 1) luminance[index] = pixels[index * 4] * .299 + pixels[index * 4 + 1] * .587 + pixels[index * 4 + 2] * .114;
+  const stride = width + 1, integral = new Float64Array(stride * (height + 1));
+  for (let y = 0; y < height; y += 1) {
+    let rowSum = 0;
+    for (let x = 0; x < width; x += 1) { rowSum += luminance[y * width + x]; integral[(y + 1) * stride + x + 1] = integral[y * stride + x + 1] + rowSum; }
+  }
+  // Flip dark regions (e.g. white-on-charcoal headers) so every label is dark text on a light background.
+  const radius = Math.max(8, Math.round(textHeight * 0.9));
+  const output = new Float32Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    const top = Math.max(0, y - radius), bottom = Math.min(height, y + radius + 1);
+    for (let x = 0; x < width; x += 1) {
+      const left = Math.max(0, x - radius), right = Math.min(width, x + radius + 1);
+      const mean = (integral[bottom * stride + right] - integral[top * stride + right] - integral[bottom * stride + left] + integral[top * stride + left]) / ((bottom - top) * (right - left));
+      const value = luminance[y * width + x];
+      output[y * width + x] = mean < 110 ? 255 - value : value;
+    }
+  }
+  // Erase long thin dark runs: table borders and link underlines (letters never have strokes this long).
+  const eraseRuns = (horizontal, minimum) => {
+    const outer = horizontal ? height : width, inner = horizontal ? width : height;
+    const at = (a, b) => horizontal ? a * width + b : b * width + a;
+    for (let a = 0; a < outer; a += 1) {
+      let start = -1;
+      for (let b = 0; b <= inner; b += 1) {
+        const on = b < inner && output[at(a, b)] < 180;
+        if (on && start < 0) start = b;
+        else if (!on && start >= 0) { if (b - start >= minimum) for (let c = start; c < b; c += 1) output[at(a, c)] = 255; start = -1; }
+      }
+    }
+  };
+  eraseRuns(true, Math.round(textHeight * 2.2));
+  eraseRuns(false, Math.round(textHeight * 2.6));
+  // Black where clearly dark, or noticeably darker than its surroundings (keeps low-contrast text like green-on-charcoal).
+  const flipped = new Float64Array(stride * (height + 1));
+  for (let y = 0; y < height; y += 1) {
+    let rowSum = 0;
+    for (let x = 0; x < width; x += 1) { rowSum += output[y * width + x]; flipped[(y + 1) * stride + x + 1] = flipped[y * stride + x + 1] + rowSum; }
+  }
+  for (let y = 0; y < height; y += 1) {
+    const top = Math.max(0, y - radius), bottom = Math.min(height, y + radius + 1);
+    for (let x = 0; x < width; x += 1) {
+      const left = Math.max(0, x - radius), right = Math.min(width, x + radius + 1);
+      const mean = (flipped[bottom * stride + right] - flipped[top * stride + right] - flipped[bottom * stride + left] + flipped[top * stride + left]) / ((bottom - top) * (right - left));
+      const index = y * width + x, value = output[index];
+      pixels[index * 4] = pixels[index * 4 + 1] = pixels[index * 4 + 2] = value < 150 || value < mean - 18 ? 0 : 255; pixels[index * 4 + 3] = 255;
+    }
+  }
+  context.putImageData(image, 0, 0);
+  return source;
+}
+function ocrItemsFromLines(lines, toPage, minimumConfidence) {
+  const items = [];
+  for (const line of lines) {
+    // Short numeric cells ("1", "2-4", "~7") get low confidence even when right; a lone vertical stroke is a "1".
+    const words = line.words.map((word) => ({ ...word, text: /^[|lI\]\[!]$/.test(word.text.trim()) ? "1" : word.text }))
+      .filter((word) => {
+        const text = word.text.trim();
+        if (/^[~≈]?\d{1,3}(?:[-–/]\d{1,3})?$/.test(text)) return word.confidence >= 10;
+        if (text.length <= 2) return word.confidence >= 80; // short letter blobs are usually stray marks
+        return word.confidence >= minimumConfidence;
+      })
+      .sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    if (!words.length) continue;
+    const height = Math.max(4, ...words.map((word) => word.bbox.y1 - word.bbox.y0));
+    const baseline = line.baseline?.y0 != null ? (line.baseline.y0 + line.baseline.y1) / 2 : Math.max(...words.map((word) => word.bbox.y1));
+    let phrase = null;
+    const flush = () => { if (phrase) items.push({ ...toPage(phrase.x0, phrase.x1, baseline), text: phrase.text }); phrase = null; };
+    // Words close together form one cell; a wide gap (or a stray border mark) starts a new table column.
+    for (const word of words) {
+      const text = word.text.replace(/^[|¦]+|[|¦]+$/g, "");
+      if (!text || /^[|¦!_=—-]+$/.test(text)) { flush(); continue; }
+      if (phrase && word.bbox.x0 - phrase.x1 < height * 0.9) { phrase.text += ` ${text}`; phrase.x1 = word.bbox.x1; }
+      else { flush(); phrase = { text, x0: word.bbox.x0, x1: word.bbox.x1 }; }
+    }
+    flush();
+  }
+  return items;
+}
+// Sparse OCR drops lone characters such as a "1" in a sets column. Find each table's number columns and
+// re-read their empty cells one at a time as a single line of digits.
+async function fillMissingOcrNumbers(worker, canvas, scale, items) {
+  const numericKinds = new Set(["warmup", "sets", "reps"]);
+  const rowKinds = new Set(["intensity", "technique", "warmup", "sets", "reps", "effort", "rest"]);
+  const crops = [];
+  const headers = findImportHeaders(importRowsOf(items));
+  headers.forEach((header, tableIndex) => {
+    const nextTop = headers[tableIndex + 1]?.top ?? -Infinity;
+    const body = items.filter((item) => item.y < header.bottom - 2 && item.y > nextTop + 2);
+    const { columns } = header;
+    const edges = importColumnBoundaries(columns, body);
+    const columnOf = (item) => { const index = edges.findIndex((edge) => item.x + item.width / 2 < edge); return index === -1 ? columns.length - 1 : index; };
+    const rowYs = [];
+    for (const item of body) {
+      if (!rowKinds.has(columns[columnOf(item)].kind) || !/\d|n\/?a/i.test(item.text)) continue;
+      if (!rowYs.some((y) => Math.abs(y - item.y) <= 4)) rowYs.push(item.y);
+    }
+    columns.forEach((column, index) => {
+      if (!numericKinds.has(column.kind)) return;
+      const left = index ? edges[index - 1] : column.left - 10, right = index < edges.length ? edges[index] : column.right + 10;
+      for (const y of rowYs) {
+        if (body.some((item) => columnOf(item) === index && Math.abs(item.y - y) <= 6)) continue;
+        crops.push({ left, right, y });
+      }
+    });
+  });
+  if (!crops.length) return;
+  const textHeight = 12 * scale;
+  await worker.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "0123456789-~/" });
+  try {
+    for (const crop of crops) {
+      const x0 = Math.max(0, Math.round(crop.left * scale)), x1 = Math.min(canvas.width, Math.round(crop.right * scale));
+      const baseline = canvas.height - crop.y * scale;
+      const y0 = Math.max(0, Math.round(baseline - textHeight * 1.3)), y1 = Math.min(canvas.height, Math.round(baseline + textHeight * 0.5));
+      if (x1 - x0 < 4 || y1 - y0 < 4) continue;
+      const pad = Math.round(textHeight);
+      const cell = document.createElement("canvas");
+      cell.width = x1 - x0 + pad * 2; cell.height = y1 - y0 + pad * 2;
+      const context = cell.getContext("2d");
+      context.fillStyle = "#fff"; context.fillRect(0, 0, cell.width, cell.height);
+      context.drawImage(canvas, x0, y0, x1 - x0, y1 - y0, pad, pad, x1 - x0, y1 - y0);
+      const { data } = await worker.recognize(cell, {}, { text: true });
+      const value = (data.text || "").replace(/\s+/g, "").trim();
+      if (/^~?\d{1,3}(?:[-/]\d{1,3})?$/.test(value)) items.push({ x: (crop.left + crop.right) / 2 - 3, width: 6, y: crop.y, text: value, rotated: false });
+    }
+  } finally {
+    await worker.setParameters({ tessedit_pageseg_mode: "11", tessedit_char_whitelist: "" });
+  }
+}
+// A "Week" label whose number wasn't read (faint or low-contrast digits): re-read the patch to its right from the
+// original render, with the patch's own contrast stretched to full black and white.
+async function fillMissingWeekNumbers(worker, original, scale, items) {
+  const targets = items.filter((item) => !item.rotated && /\bweeks?$/i.test(item.text.trim()));
+  if (!targets.length) return;
+  const textHeight = 12 * scale;
+  await worker.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "0123456789" });
+  try {
+    for (const item of targets) {
+      const x0 = Math.round((item.x + item.width) * scale), x1 = Math.min(original.width, Math.round(x0 + textHeight * 2.6));
+      const baseline = original.height - item.y * scale;
+      const y0 = Math.max(0, Math.round(baseline - textHeight * 1.4)), y1 = Math.min(original.height, Math.round(baseline + textHeight * 0.4));
+      if (x1 - x0 < 4 || y1 - y0 < 4) continue;
+      const pad = Math.round(textHeight);
+      const cell = document.createElement("canvas");
+      cell.width = (x1 - x0) * 2 + pad * 2; cell.height = (y1 - y0) * 2 + pad * 2;
+      const context = cell.getContext("2d", { willReadFrequently: true });
+      context.drawImage(original, x0, y0, x1 - x0, y1 - y0, pad, pad, (x1 - x0) * 2, (y1 - y0) * 2);
+      const image = context.getImageData(pad, pad, (x1 - x0) * 2, (y1 - y0) * 2);
+      const values = [];
+      for (let index = 0; index < image.data.length; index += 4) values.push(image.data[index] * .299 + image.data[index + 1] * .587 + image.data[index + 2] * .114);
+      const sorted = [...values].sort((a, b) => a - b);
+      const low = sorted[Math.floor(sorted.length * .05)], high = sorted[Math.floor(sorted.length * .95)];
+      const background = sorted[Math.floor(sorted.length / 2)];
+      const darkBackground = background < (low + high) / 2;
+      const middle = (low + high) / 2;
+      values.forEach((value, index) => {
+        const ink = darkBackground ? value > middle : value < middle;
+        image.data[index * 4] = image.data[index * 4 + 1] = image.data[index * 4 + 2] = ink ? 0 : 255; image.data[index * 4 + 3] = 255;
+      });
+      context.fillStyle = "#fff"; context.fillRect(0, 0, cell.width, cell.height);
+      context.putImageData(image, pad, pad);
+      const { data } = await worker.recognize(cell, {}, { text: true });
+      const digits = (data.text || "").replace(/\D/g, "");
+      if (/^\d{1,2}$/.test(digits)) item.text = `${item.text.trim()} ${digits}`;
+    }
+  } finally {
+    await worker.setParameters({ tessedit_pageseg_mode: "11", tessedit_char_whitelist: "" });
+  }
+}
+// OCR each page and turn recognised words into positioned items (PDF units, y from the bottom) for the importers.
+async function ocrPdfPages(pdfDocument, pages, onProgress) {
+  const Tesseract = await loadTesseract();
+  onProgress("Preparing text recognition…");
+  const worker = await Tesseract.createWorker("eng");
+  const linesOf = (data) => (data.blocks || []).flatMap((block) => block.paragraphs.flatMap((paragraph) => paragraph.lines));
+  try {
+    await worker.setParameters({ preserve_interword_spaces: "1", tessedit_pageseg_mode: "11" });
+    for (const target of pages) {
+      onProgress(`Reading page ${target.number} of ${pages.length}…`);
+      const page = await pdfDocument.getPage(target.number);
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.min(4, 4400 / Math.max(base.width, base.height));
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+      // Sideways labels (e.g. a session name running up a table's edge): a copy of the page turned a quarter clockwise.
+      const small = 0.5;
+      const turned = document.createElement("canvas");
+      turned.width = Math.ceil(canvas.height * small); turned.height = Math.ceil(canvas.width * small);
+      const turnedContext = turned.getContext("2d");
+      turnedContext.translate(turned.width, 0); turnedContext.rotate(Math.PI / 2); turnedContext.scale(small, small);
+      turnedContext.drawImage(canvas, 0, 0);
+      const original = document.createElement("canvas");
+      original.width = canvas.width; original.height = canvas.height;
+      original.getContext("2d").drawImage(canvas, 0, 0);
+      prepareOcrCanvas(canvas, 10 * scale);
+      const { data } = await worker.recognize(canvas, {}, { blocks: true, text: false });
+      const items = ocrItemsFromLines(linesOf(data), (x0, x1, baseline) => ({ x: x0 / scale, width: (x1 - x0) / scale, y: (canvas.height - baseline) / scale, rotated: false }), 45);
+      await fillMissingOcrNumbers(worker, canvas, scale, items);
+      await fillMissingWeekNumbers(worker, original, scale, items);
+      original.width = original.height = 0;
+      const sideways = await worker.recognize(turned, {}, { blocks: true, text: false });
+      // Turned pixel (u, v) came from page pixel x = v / small, y_from_bottom = u / small (text read bottom-to-top).
+      for (const item of ocrItemsFromLines(linesOf(sideways.data), (u0, u1, v) => ({ x: v / small / scale, width: 1, y: (u0 + u1) / 2 / small / scale, rotated: true }), 80)) {
+        if (/[a-z]{3}/i.test(item.text) && item.text.length >= 4) items.push(item);
+      }
+      target.items = items.map((item) => ({ ...item, text: item.text.trim() }));
+      target.width = base.width;
+      target.ocr = true;
+      canvas.width = canvas.height = turned.width = turned.height = 0;
+    }
+  } finally {
+    await worker.terminate();
+  }
 }
 function pdfTextRows(items) {
   const rows = [];
@@ -655,7 +897,8 @@ function parseWorkoutPdf(pages, fallbackText, fileName = "") {
     importProgramName = "Imported Program · Full Cycle";
     return plan;
   }
-  const fileTitle = fileName.replace(/\.pdf$/i, "").replace(/\s*\(\d+\)$/, "").replace(/[_]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+  const fullTitle = fileName.replace(/\.pdf$/i, "").replace(/\s*\(\d+\)$/, "").replace(/[_]+/g, " ").replace(/\s+/g, " ").trim();
+  const fileTitle = (fullTitle.length > 40 ? fullTitle.slice(0, 41).replace(/\s+\S*$/, "") : fullTitle).replace(/[\s\-–—·:,]+$/, "");
   const tablePlan = parseGenericWorkoutTables(pages);
   if (tablePlan.reduce((total, group) => total + group.exercises.length, 0) >= 2) {
     importProgramName = fileTitle || (tablePlan.some((group) => group.programWeek > 1) ? "Imported Program · Full Cycle" : "Imported Program");
@@ -737,21 +980,22 @@ const importWeekPattern = /^\s*weeks?\s*(\d{1,2})(?:\s*(?:-|–|—|to|&)\s*(\d{
 const importSessionPattern = /\b(?:day|session|workout)\s*(?:\d{1,2}|[a-e])\b/i;
 const importHeadingPattern = /^\s*(?:weeks?\s*\d|(?:day|session|workout)\s*(?:\d{1,2}|[a-e])\b|(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)/i;
 const importHeaderRules = [
-  ["ignore", /video|demo|link|^#$|^no\.?$|^ls\s*rpe$|last\s*set|^set\s*\d+$|^\d+$|^done$|^log$/i],
+  ["ignore", /video|demo|link|^#$|^no\.?$|^ls\s*rpe$|^last\s*set$|^set\s*\d+$|^\d+$|^done$|^log$/i],
   ["warmup", /warm/i],
   ["substitution", /substitut|alternat|swap|option/i],
   ["notes", /note|cue|comment|instruction|coach|technique/i],
   ["tempo", /tempo/i],
   ["rest", /rest|recovery/i],
   ["setsreps", /sets?\s*[x×/]\s*reps?/i],
-  ["effort", /rpe|rir|effort/i],
+  ["effort", /rp[eil]\b|rpe|rir|effort/i],
+  ["technique", /technique|method/i],
   ["intensity", /%|1\s*rm|intensity/i],
   ["load", /load|weight|kg|lbs/i],
   ["reps", /rep|time|duration/i],
   ["sets", /set/i],
   ["exercise", /exercise|movement|lift|name/i],
 ];
-const importHeaderWord = /^(?:exercises?|movements?|lifts?|names?|sets?|working|warm|warmup|up|reps?|repetitions|time|duration|rest|recovery|rpe|rir|lsrpe|effort|intensity|%?1rm|%|load|weight|kg|lbs|tempo|notes?|coaching|cues?|comments?|instructions?|technique|substitutions?|substitutes?|alternatives?|options?|swap|video|demo|links?|weeks?|ls|last|done|log|of|and|or|x|×|min|mins|sec|secs|seconds|minutes|target|top|#|no|\d{1,2})$/i;
+const importHeaderWord = /^(?:exercises?|movements?|lifts?|names?|sets?|working|warm|warmup|up|reps?|repetitions|time|duration|rest|recovery|rpe|rir|lsrpe|effort|intensity|%?1rm|%|load|weight|kg|lbs|tempo|notes?|coaching|cues?|comments?|instructions?|technique|method|early|tracking|substitutions?|substitutes?|alternatives?|options?|swap|video|demo|links?|weeks?|ls|last|done|log|of|and|or|x|×|min|mins|sec|secs|seconds|minutes|target|top|#|no|\d{1,2})$/i;
 function isImportHeaderCell(text) {
   const words = text.split(/[\s/()\-–:,.]+/).filter(Boolean);
   return text.length <= 32 && words.length > 0 && words.filter((word) => importHeaderWord.test(word)).length / words.length >= 0.6;
@@ -785,11 +1029,14 @@ function importText(items) {
     .replace(/(\w)- (\w)/g, (match, before, after) => /[A-Z0-9]/.test(before + after) ? `${before}-${after}` : `${before}${after}`).trim();
 }
 function importLabelText(text) {
-  const label = text.replace(importWeekPattern, "").replace(/\s*#\s*/g, " #").replace(/^[\s\-–—:|·/.,]+|[\s\-–—:|·/.,]+$/g, "").replace(/\s+/g, " ").trim();
+  let label = text.replace(importWeekPattern, "").replace(/\s*#\s*/g, " #").replace(/^[\s\-–—:|·/.,]+|[\s\-–—:|·/.,]+$/g, "").replace(/\s+/g, " ").trim();
+  if ((label.match(/\(/g) || []).length > (label.match(/\)/g) || []).length) label += ")"; // OCR sometimes drops a closing bracket
   return /[a-z][A-Z]/.test(label) || label === label.toUpperCase() || label === label.toLowerCase() ? label.toLowerCase().replace(/(^|[\s(/-])([a-z])/g, (match, before, letter) => before + letter.toUpperCase()) : label;
 }
 function findImportHeaders(rows) {
-  const isHeaderLike = (row) => row.items.every((item) => !/^\d+(?:[.,]\d+)?$/.test(item.text) && (item.text.match(/\d/g) || []).length <= 1 && item.text.split(/\s+/).length <= 4);
+  const headerLikeItem = (item) => !/^\d+(?:[.,]\d+)?$/.test(item.text) && (item.text.match(/\d/g) || []).length <= 1 && item.text.split(/\s+/).length <= 4;
+  // A header line is mostly header-like cells; one stray mark (common in OCR) doesn't disqualify it.
+  const isHeaderLike = (row) => { const good = row.items.filter(headerLikeItem).length; return good === row.items.length || (row.items.length >= 3 && good >= row.items.length - 1 && row.items.some((item) => isImportHeaderCell(item.text))); };
   const scored = rows.map((row) => {
     const kinds = row.items.map((item) => isImportHeaderCell(item.text) ? classifyImportHeader(item.text) : null);
     const named = new Set(kinds.filter((kind) => kind && kind !== "ignore" && kind !== "week"));
@@ -801,7 +1048,8 @@ function findImportHeaders(rows) {
   for (const candidate of scored) if (!cores.some((core) => Math.abs(core.row.y - candidate.row.y) <= 30)) cores.push(candidate);
   return cores.map(({ row: core, weekColumns }) => {
     const band = rows.filter((row) => row === core || (Math.abs(row.y - core.y) <= 22 && isHeaderLike(row) && !cores.some((other) => other.row === row)));
-    const headerItems = band.flatMap((row) => row.items).filter((item) => weekColumns >= 2 || !importWeekPattern.test(item.text));
+    // Stray marks inside a header line (OCR noise such as a lone "1") are dropped rather than disqualifying the line.
+    const headerItems = band.flatMap((row) => row.items).filter((item) => (weekColumns >= 2 || !importWeekPattern.test(item.text)) && /[a-z%#]/i.test(item.text));
     const columns = [];
     for (const item of [...headerItems].sort((a, b) => a.x - b.x)) {
       const column = columns.at(-1);
@@ -909,7 +1157,7 @@ function buildImportedExercise(cells, weekCell = null) {
   let repsText = text("reps"), sets = "", effort = "";
   const trailingTime = text("exercise").match(/\s+(\d{1,3}\s*(?:s|sec|secs))$/i);
   const name = text("exercise").replace(trailingTime && repsText.replace(/\s/g, "").toLowerCase().includes(trailingTime[1].replace(/\s/g, "").toLowerCase()) ? trailingTime[0] : "", "").replace(/^\d{1,2}[.)]\s+/, "").trim();
-  if (!/[a-z]{2}/i.test(name)) return null;
+  if (!/[a-z]{3}/i.test(name)) return null;
   const notes = [];
   const setsText = text("sets");
   if (/^\d{1,2}/.test(setsText)) {
@@ -928,11 +1176,14 @@ function buildImportedExercise(cells, weekCell = null) {
   if (target.note) notes.push(target.note);
   const rest = importRestSeconds(text("rest"), header("rest"));
   if (rest.note) notes.push(rest.note);
-  for (const cell of cells.effort || []) {
+  const effortCells = (cells.effort || []).map((cell) => ({ ...cell, text: cell.text.replace(/\bn\/a\b/gi, "").replace(/\s+/g, " ").trim() })).filter((cell) => cell.text && !/^-+$/.test(cell.text));
+  for (const cell of effortCells) {
     const parsed = importEffort(cell.text, cell.header);
     if (parsed.note) notes.push(parsed.note);
-    effort = effort || parsed.effort;
+    else if (effortCells.length > 1) notes.push(`${importLabelText(cell.header.replace(/\b(?:rpe|rir)\b/i, "").trim()) || "Effort"}: ${parsed.effort}`);
+    effort = parsed.effort || effort; // the last effort column (e.g. last-set RPE) is the target
   }
+  if (text("technique")) notes.push(`Technique: ${text("technique")}`);
   for (const cell of cells.intensity || []) if (cell.text && !/^n\/?a$/i.test(cell.text)) notes.push(importEffort(cell.text, `${cell.header} %`).note || `Target load: ${cell.text}`);
   if (text("load")) notes.push(`Load: ${text("load")}`);
   if (text("tempo")) notes.push(`Tempo: ${text("tempo")}`);
@@ -955,12 +1206,28 @@ function parseGenericWorkoutTables(pages) {
     const flat = page.items.filter((item) => !item.rotated);
     const rows = importRowsOf(flat);
     const headers = findImportHeaders(rows);
-    const markers = rows.flatMap((row) => row.items.filter((item) => importWeekPattern.test(item.text)).map((item) => ({ y: row.y, match: item.text.match(importWeekPattern) })));
+    // "Week N" may carry a stray OCR mark in front ("1 WEEK 1"), so look inside short cells too.
+    // OCR often confuses digits with look-alike letters right after "Week" (S/5, O/0, I/l/1, B/8, Z/2).
+    const ocrDigits = (text) => text.replace(/(\bweeks?\s*)([0-9SOoIlBZ|]{1,2})\b/i, (match, word, number) => word + number.replace(/S/g, "5").replace(/[Oo]/g, "0").replace(/[Il|]/g, "1").replace(/B/g, "8").replace(/Z/g, "2"));
+    const weekIn = (raw) => {
+      const text = ocrDigits(raw);
+      if (importWeekPattern.test(text)) return text.match(importWeekPattern); // "Week 3 / Day 1-2", "Weeks 1-4"
+      const at = text.search(/\bweeks?\s*\d/i);
+      return at >= 0 && text.split(/\s+/).length <= 4 ? text.slice(at).match(importWeekPattern) : null;
+    };
+    const markers = rows.flatMap((row) => row.items.map((item) => ({ y: row.y, match: /\bweeks?\b/i.test(item.text) ? weekIn(item.text) : null })).filter((marker) => marker.match));
     let previousBottom = Infinity;
     headers.forEach((header, tableIndex) => {
       const nextTop = headers[tableIndex + 1]?.top ?? -Infinity;
       const body = flat.filter((item) => item.y < header.bottom - 2 && item.y > nextTop + 2);
-      const { columns } = header;
+      const columns = [...header.columns];
+      // Long sentences well right of the last header are a notes column whose header wasn't read (common with OCR).
+      const lastRight = columns.at(-1).right;
+      const beyond = body.filter((item) => item.x > lastRight + 30 && item.text.split(/\s+/).length >= 5);
+      if (beyond.length >= 2 && !columns.some((column) => column.kind === "notes")) {
+        const left = Math.min(...beyond.map((item) => item.x)), right = Math.max(...beyond.map((item) => item.x + item.width));
+        columns.push({ left, right, center: (left + right) / 2, header: "Notes", kind: "notes", items: [] });
+      }
       const boundaries = importColumnBoundaries(columns, body);
       const columnOf = (item) => { const index = boundaries.findIndex((edge) => item.x + item.width / 2 < edge); return index === -1 ? columns.length - 1 : index; };
       const weekColumns = columns.filter((column) => column.kind === "week");
@@ -982,7 +1249,8 @@ function parseGenericWorkoutTables(pages) {
       const cellsByAnchor = anchors.map(() => ({}));
       let tableBottom = anchors.at(-1);
       columns.forEach((column, columnIndex) => {
-        const lines = importRowsOf(body.filter((item) => columnOf(item) === columnIndex));
+        // Short marks entirely left of the first header (bits of side labels, OCR specks) are not part of any cell.
+        const lines = importRowsOf(body.filter((item) => columnOf(item) === columnIndex && (item.x + item.width >= columns[0].left - 5 || (item.text.match(/[a-z]/gi) || []).length >= 3)));
         assignImportLines(lines, anchors, spacing).forEach((items, anchorIndex) => {
           if (!items.length) return;
           tableBottom = Math.min(tableBottom, ...items.map((item) => item.y));
