@@ -26,8 +26,19 @@ const todayKey = () => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 };
 const weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const colorThemes = [
+  { id: "plum", name: "Plum", colors: ["#70485a", "#bf7787", "#e5bdc9"] },
+  { id: "navy", name: "Navy & Butter", colors: ["#2b3f74", "#d82d32", "#feeea7"] },
+  { id: "aubergine", name: "Aubergine & Sand", colors: ["#3f1d47", "#e06e2d", "#e9d2aa"] },
+  { id: "terracotta", name: "Brick & Apricot", colors: ["#a04740", "#ef9c44", "#f3e1c8"] },
+];
+function applyTheme() {
+  const theme = colorThemes.find((candidate) => candidate.id === state.theme) || colorThemes[0];
+  if (theme.id === "plum") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = theme.id;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.colors[0]);
+}
 const defaultState = () => ({
-  version: 1, onboarded: false, name: "Sarah", units: "kg", weightStep: 2.5, activeTab: "Home", activeWorkout: null, todayWorkoutOverride: null,
+  version: 1, onboarded: false, name: "Sarah", units: "kg", weightStep: 2.5, theme: "plum", activeTab: "Home", activeWorkout: null, todayWorkoutOverride: null,
   program: { name: "Glute Growth", repeatWeekly: true, cycleWeeks: 1, activeCycleWeek: 1, cycleStartedAt: todayKey(), days: [
     { id: "mon", day: "Monday", name: "Lower Body", exercises: [
       { id: "hip", name: "Barbell Hip Thrust", sets: 4, reps: 8, rest: 120, notes: "", equipment: "barbell" },
@@ -115,6 +126,7 @@ async function initializeState() {
     await writeIndexedState(JSON.stringify(state));
   } catch { }
   render();
+  if (state.activeWorkout?.restEndsAt) runRestTicker(); // resume a rest timer after the app was reloaded
   navigator.storage?.persist?.().catch(() => { });
 }
 function escapeHtml(value = "") { return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]); }
@@ -224,6 +236,7 @@ function getUpcomingWorkout() {
   return ordered.find((day) => !isWorkoutComplete(day)) || null;
 }
 function render() {
+  applyTheme();
   if (!state.onboarded) return renderOnboarding();
   if (state.activeWorkout) { app.innerHTML = renderWorkout(); return; }
   const tab = state.activeTab;
@@ -318,7 +331,7 @@ function renderChart(records) {
 }
 function renderProfile() {
   const standalone = window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
-  return `<section class="page-intro"><div class="eyebrow">Made for your pace</div><h1>Your space</h1></section><div class="profile-head"><div class="profile-avatar">${escapeHtml(state.name.slice(0, 1).toUpperCase())}</div><div><h3>${escapeHtml(state.name)}</h3><p>${escapeHtml(state.program.name)}</p></div></div><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div><div class="setting-row"><div><strong>Your name</strong><small>Personalize your home screen</small></div><button class="link-button" data-action="edit-name">${escapeHtml(state.name)} ${icon("edit")}</button></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Track-Her</button>`}</section><p class="eyebrow" style="margin:22px 0;text-align:center">Track-Her · Your workouts, in rhythm</p>`;
+  return `<section class="page-intro"><div class="eyebrow">Made for your pace</div><h1>Your space</h1></section><div class="profile-head"><div class="profile-avatar">${escapeHtml(state.name.slice(0, 1).toUpperCase())}</div><div><h3>${escapeHtml(state.name)}</h3><p>${escapeHtml(state.program.name)}</p></div></div><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div><div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div><div class="setting-row"><div><strong>Your name</strong><small>Personalize your home screen</small></div><button class="link-button" data-action="edit-name">${escapeHtml(state.name)} ${icon("edit")}</button></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Track-Her</button>`}</section><p class="eyebrow" style="margin:22px 0;text-align:center">Track-Her · Your workouts, in rhythm</p>`;
 }
 function renderOnboarding() {
   app.innerHTML = `<div class="onboarding"><div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Track-Her</div><div class="onboarding-visual"><svg viewBox="0 0 220 190" fill="none" aria-hidden="true"><path d="M45 146c13-38 26-50 49-50 17 0 23 11 34 11 12 0 17-15 28-15 15 0 21 18 25 54" stroke="#60796c" stroke-width="14" stroke-linecap="round"/><path d="M73 81c-2-14 3-27 17-31 14-4 25 5 26 20 1 16-7 29-20 30-12 0-21-7-23-19Z" fill="#bd7f76"/><path d="M59 147h116" stroke="#40594d" stroke-width="8" stroke-linecap="round"/><circle cx="172" cy="48" r="16" fill="#dfb965"/><path d="m169 48 3 3 6-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="eyebrow">A little stronger, each time</div><h1>Welcome to Track-Her</h1><p class="onboarding-copy">Your workouts. Your progress. All in one place.</p></div><div><div class="step-dots"><i class="active"></i><i></i><i></i></div><div class="onboarding-actions"><button class="primary-button" data-action="onboarding-next">LET'S GET STARTED ${icon("arrow")}</button><button class="link-button" data-action="use-sample">Explore with a sample plan</button></div></div></div>`;
@@ -357,6 +370,9 @@ function beginRest(seconds) {
   if (!seconds) return;
   state.activeWorkout.restEndsAt = Date.now() + seconds * 1000;
   save(); render();
+  runRestTicker();
+}
+function runRestTicker() {
   clearInterval(restInterval);
   restInterval = window.setInterval(() => {
     if (!state.activeWorkout?.restEndsAt || Date.now() >= state.activeWorkout.restEndsAt) {
@@ -372,8 +388,9 @@ function completeSet(exerciseIndex, setIndex) {
   const exercise = state.activeWorkout.exercises[exerciseIndex];
   const set = exercise.sets[setIndex];
   set.complete = !set.complete;
-  if (set.complete) beginRest(exercise.rest);
-  else { state.activeWorkout.restEndsAt = null; save(); render(); }
+  if (set.complete && Number(exercise.rest) > 0) { beginRest(Number(exercise.rest)); return; }
+  if (!set.complete) state.activeWorkout.restEndsAt = null;
+  save(); render();
 }
 function finishWorkout() {
   const workout = state.activeWorkout;
@@ -1188,6 +1205,7 @@ document.addEventListener("click", (event) => {
   else if (action === "add-rest") { state.activeWorkout.restEndsAt += 30000; save(); render(); }
   else if (action === "exercise-note") showNoteEditor(Number(button.dataset.exerciseIndex));
   else if (action === "save-note") { state.activeWorkout.exercises[Number(button.dataset.exerciseIndex)].notes = document.querySelector("#workout-note").value.trim(); save(); document.querySelector(".overlay")?.remove(); render(); }
+  else if (action === "set-theme") { state.theme = button.dataset.themeId; save(); render(); }
   else if (action === "edit-name") showNameEditor();
   else if (action === "save-name") { state.name = document.querySelector("#user-name").value.trim() || "Sarah"; save(); document.querySelector(".overlay")?.remove(); render(); }
   else if (action === "export-backup") exportBackup();
