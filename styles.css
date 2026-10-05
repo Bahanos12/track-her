@@ -60,7 +60,7 @@
   --shadow: 0 10px 28px rgba(80, 35, 30, .06);
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 body { margin: 0; min-width: 320px; background: var(--paper); color: var(--ink); }
 button, input, select, textarea { font: inherit; }
 button { color: inherit; touch-action: manipulation; }
@@ -183,3 +183,8 @@ h3 { font: 700 16px/1.35 Manrope, sans-serif; letter-spacing: 0; }
 .set-heading-actions { display: flex; align-items: center; gap: 8px; }.set-delete { width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: white; color: #9d5365; font-size: 19px; line-height: 1; cursor: pointer; }.set-delete:hover { border-color: #e4c1cb; background: var(--tint-bg); }
 .plan-edit-target { display: block; min-width: 0; flex: 1; padding: 6px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }.plan-edit-target .day-label, .plan-edit-target .day-name { display: flex; }.exercise-edit { display: flex; align-items: center; gap: 6px; min-height: 40px; }.exercise-edit strong { min-width: 0; font-size: 12px; }
 .edit-hint { display: inline-grid; flex: 0 0 auto; place-items: center; margin-left: 6px; color: var(--muted); opacity: .7; }.edit-hint svg { width: 12px; height: 12px; }.plan-edit-target:hover .edit-hint { color: var(--sage-dark); opacity: 1; }
+button:focus:not(:focus-visible) { outline: none; }
+button.exercise-row { width: 100%; border-width: 0 0 1px; border-style: solid; border-color: #f0f0eb; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }button.exercise-row:last-child { border-bottom: 0; }button.exercise-row:active { background: var(--tint-bg); }
+.exercise-row-main { min-width: 0; }.exercise-row-name, .exercise-row-detail { display: block; }.exercise-preview .exercise-row-detail { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.preview-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }.preview-stat { padding: 10px 8px; border: 1px solid var(--line); border-radius: 10px; background: white; text-align: center; }.preview-stat span { display: block; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; }.preview-stat strong { display: block; margin-top: 4px; font-size: 14px; overflow-wrap: anywhere; }
+.preview-block { margin-top: 14px; }.preview-block p { margin: 0; font-size: 13px; line-height: 1.55; }
