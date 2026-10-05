@@ -254,9 +254,10 @@ function renderNav() {
   return `<nav class="bottom-nav" aria-label="Main navigation">${tabs.map(([label, glyph]) => `<button class="nav-item ${state.activeTab === label ? "active" : ""}" data-tab="${label}">${icon(glyph)}<span>${label}</span></button>`).join("")}</nav>`;
 }
 function renderHome() {
-  const scheduledWorkout = currentWorkout() || getUpcomingWorkout();
-  const override = state.todayWorkoutOverride;
-  const alternate = override?.date === todayKey() && override.scheduledDayId === scheduledWorkout?.id
+  const override = todayOverride();
+  const pinned = override?.pinned ? state.program.days.find((day) => day.id === override.scheduledDayId && !isWorkoutComplete(day)) : null;
+  const scheduledWorkout = pinned || currentWorkout() || getUpcomingWorkout();
+  const alternate = override && override.scheduledDayId === scheduledWorkout?.id && override.workoutId !== override.scheduledDayId
     ? state.program.days.find((day) => day.id === override.workoutId)
     : null;
   const workout = alternate || scheduledWorkout;
@@ -275,7 +276,7 @@ function renderHome() {
   }
   if (!workout) return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}, ${escapeHtml(state.name)}</h1></section><div class="surface empty-state"><h3>Your next chapter starts here</h3><p>Create a simple workout plan or import the one you already follow.</p><button class="primary-button" data-action="create-program">CREATE MY PLAN</button></div>`;
   const isToday = scheduledWorkout.day === todayDay();
-  const alternatives = activeCycleDays().filter((day) => day.id !== scheduledWorkout.id && !isWorkoutComplete(day));
+  const alternatives = Number(state.program.cycleWeeks) > 1 ? [true] : activeCycleDays().filter((day) => day.id !== scheduledWorkout.id && !isWorkoutComplete(day));
   return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}, ${escapeHtml(state.name)}</h1></section>
     <div class="section-heading"><h2>${isToday ? "Today's workout" : "Up next"}</h2><button class="link-button" data-tab="Plan">View plan</button></div>
     <section class="today-card"><div class="today-top"><span class="eyebrow">${escapeHtml(scheduledWorkout.day)} · ${isToday ? "Today" : "Coming up"}${alternate ? " · Changed for today" : ""}</span><div class="today-card-actions"><span class="date-chip">${weekdayNames.includes(scheduledWorkout.day) ? prettyDate(weekdayDate(scheduledWorkout.day).toISOString().slice(0, 10), { month: "short", day: "numeric" }) : "Any day"}</span>${alternatives.length ? `<button class="today-options-button" data-action="change-today-workout" data-scheduled-day-id="${scheduledWorkout.id}" aria-label="More workout options" title="More workout options">${icon("more")}</button>` : ""}</div></div><div class="today-title">${escapeHtml(workout.name)}</div><p class="today-meta">${workout.exercises.length} exercises <span aria-hidden="true">·</span> Approximately ${estimateDuration(workout)} min</p><div class="today-bottom"><div class="avatar-stack"><span class="tiny-dots"><i></i><i></i><i></i></span><span>${escapeHtml(state.program.name)}</span></div><button class="primary-button" data-action="start-workout" data-workout-id="${workout.id}" data-scheduled-workout-id="${scheduledWorkout.id}">START WORKOUT ${icon("arrow")}</button></div></section>
@@ -291,7 +292,7 @@ function renderPlan() {
   const repeatTitle = multiWeek ? `Repeat full ${state.program.cycleWeeks}-week program` : "Repeat this cycle every week";
   const repeatHint = repeatWeekly ? (multiWeek ? "Starts again at Week 1 when the full program is complete." : "Your sessions restart next week.") : "This program stops after its sessions are complete.";
   const planSummary = multiWeek ? `${state.program.cycleWeeks}-week program · ${state.program.days.length} sessions` : `${state.program.days.length} training days`;
-  return `<section class="page-intro"><div class="eyebrow">Your routine</div><h1>Your plan</h1><p>Keep it simple. Show up, one session at a time.</p></section><div class="toolbar"><div><h3>${escapeHtml(state.program.name)}</h3><span class="eyebrow">${planSummary}</span></div><button class="inline-icon-button" data-action="edit-program" aria-label="Edit program name">${icon("edit")}</button></div><div class="button-row" style="margin-bottom:14px"><button class="secondary-button" data-action="import-pdf">↑ &nbsp;Import PDF</button><button class="secondary-button" data-action="add-day">+ &nbsp;Add workout</button></div><div class="setting-row cycle-setting"><div><strong>${repeatTitle}</strong><small>${repeatHint}</small></div><select class="select-field" data-change="repeat-weekly" aria-label="Repeat this cycle every week"><option value="false" ${repeatWeekly ? "" : "selected"}>One-time</option><option value="true" ${repeatWeekly ? "selected" : ""}>Repeat</option></select></div><div class="program-card">${state.program.days.map((day) => `<section class="day-block"><div class="day-heading"><div><div class="day-label"><i class="day-dot"></i>${escapeHtml(day.name)}</div><div class="day-name">${multiWeek ? `Week ${day.programWeek || 1} · ` : ""}${escapeHtml(day.day)}</div></div><button class="inline-icon-button" data-action="add-exercise" data-day-id="${day.id}" aria-label="Add exercise to ${escapeHtml(day.name)}">+</button></div>${day.exercises.length ? day.exercises.map((exercise) => `<div class="plan-exercise"><strong>${escapeHtml(exercise.name)}</strong><div class="plan-exercise-detail"><span>${exercise.sets} × ${exercise.reps || "—"}${exercise.rest ? ` · ${exercise.rest}s rest` : ""}</span><button class="inline-icon-button" data-action="replace-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Replace ${escapeHtml(exercise.name)}" title="Find a similar movement">${icon("swap")}</button><button class="inline-icon-button destructive-icon" data-action="remove-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Remove ${escapeHtml(exercise.name)}" title="Remove from this workout">${icon("trash")}</button></div></div>`).join("") : `<p class="day-empty">No exercises yet. Tap + to add one.</p>`}</section>`).join("") || `<div class="empty-state"><h3>No workouts yet</h3><p>Add a workout day to begin.</p><button class="primary-button" data-action="add-day">ADD WORKOUT</button></div>`}</div><div class="section"><button class="link-button" data-action="import-pdf">Import a workout PDF →</button></div>`;
+  return `<section class="page-intro"><div class="eyebrow">Your routine</div><h1>Your plan</h1><p>Keep it simple. Show up, one session at a time.</p></section><div class="toolbar"><div><h3>${escapeHtml(state.program.name)}</h3><span class="eyebrow">${planSummary}</span></div><button class="inline-icon-button" data-action="edit-program" aria-label="Edit program name">${icon("edit")}</button></div><div class="button-row" style="margin-bottom:14px"><button class="secondary-button" data-action="import-pdf">↑ &nbsp;Import PDF</button><button class="secondary-button" data-action="add-day">+ &nbsp;Add workout</button></div><div class="setting-row cycle-setting"><div><strong>${repeatTitle}</strong><small>${repeatHint}</small></div><select class="select-field" data-change="repeat-weekly" aria-label="Repeat this cycle every week"><option value="false" ${repeatWeekly ? "" : "selected"}>One-time</option><option value="true" ${repeatWeekly ? "selected" : ""}>Repeat</option></select></div><div class="program-card">${state.program.days.map((day) => `<section class="day-block"><div class="day-heading"><div><div class="day-label"><i class="day-dot"></i>${escapeHtml(day.name)}</div><div class="day-name">${multiWeek ? `Week ${day.programWeek || 1} · ` : ""}${escapeHtml(day.day)}</div></div><button class="inline-icon-button" data-action="add-exercise" data-day-id="${day.id}" aria-label="Add exercise to ${escapeHtml(day.name)}">+</button></div>${day.exercises.length ? day.exercises.map((exercise) => `<div class="plan-exercise"><strong>${escapeHtml(exercise.name)}</strong><div class="plan-exercise-detail"><span>${exercise.sets} × ${exercise.reps || "—"}${exercise.rest ? ` · ${exercise.rest}s rest` : ""}</span><button class="inline-icon-button" data-action="replace-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Replace ${escapeHtml(exercise.name)}" title="Find a similar movement">${icon("swap")}</button><button class="inline-icon-button destructive-icon" data-action="remove-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Remove ${escapeHtml(exercise.name)}" title="Remove from this workout">${icon("trash")}</button></div></div>`).join("") : `<p class="day-empty">No exercises yet. Tap + to add one.</p>`}</section>`).join("") || `<div class="empty-state"><h3>No workouts yet</h3><p>Add a workout day to begin.</p><button class="primary-button" data-action="add-day">ADD WORKOUT</button></div>`}</div><div class="section plan-footer"><button class="link-button" data-action="import-pdf">Import a workout PDF →</button>${state.program.days.length ? `<button class="secondary-button new-plan-button" data-action="new-plan">${icon("trash")} Delete plan &amp; start a new one</button>` : ""}</div>`;
 }
 function allExerciseNames() { return [...new Set([...state.program.days.flatMap((day) => day.exercises.map((exercise) => exercise.name)), ...state.history.flatMap((workout) => workout.exercises.map((exercise) => exercise.name))])].sort(); }
 function recordsFor(name) { return state.history.flatMap((workout) => workout.exercises.filter((exercise) => exercise.name.toLowerCase() === name.toLowerCase()).flatMap((exercise) => exercise.sets.map((set) => ({ ...set, date: workout.date })))); }
@@ -353,7 +354,7 @@ function renderWorkout() {
 function renderLogExercise(exercise, exerciseIndex) {
   const previous = previousExercise({ id: exercise.exerciseId, name: exercise.name });
   const prevText = previous ? `Last time: ${previous.sets.at(-1).weight || 0} ${state.units} × ${previous.sets.at(-1).reps}` : "Your first time with this lift";
-  return `<section class="log-card"><div class="log-title-row"><div><h3>${String(exerciseIndex + 1).padStart(2, "0")} &nbsp;${escapeHtml(exercise.name)}</h3><p>Target: ${exercise.targetSets} × ${exercise.targetReps || "—"}${exercise.notes ? ` · ${escapeHtml(exercise.notes)}` : ""}</p></div><div class="log-actions"><button class="inline-icon-button" data-action="replace-active-exercise" data-exercise-index="${exerciseIndex}" aria-label="Replace ${escapeHtml(exercise.name)}" title="Find a similar movement">${icon("swap")}</button><button class="inline-icon-button" data-action="exercise-note" data-exercise-index="${exerciseIndex}" aria-label="Add a note">${icon("edit")}</button><button class="inline-icon-button destructive-icon" data-action="remove-active-exercise" data-exercise-index="${exerciseIndex}" aria-label="Remove ${escapeHtml(exercise.name)} from this session" title="Remove from this session">${icon("trash")}</button></div></div><div class="previous-line">${escapeHtml(prevText)}</div>${exercise.sets.map((set, setIndex) => renderSetLine(exerciseIndex, setIndex, set)).join("")}<button class="add-set" data-action="add-set" data-exercise-index="${exerciseIndex}">+ Add set</button></section>`;
+  return `<section class="log-card"><div class="log-title-row"><div><h3>${String(exerciseIndex + 1).padStart(2, "0")} &nbsp;${escapeHtml(exercise.name)}</h3><p>Target: ${exercise.targetSets} × ${exercise.targetReps || "—"}${exercise.notes ? ` · ${escapeHtml(exercise.notes)}` : ""}</p></div><div class="log-actions"><button class="inline-icon-button" data-action="replace-active-exercise" data-exercise-index="${exerciseIndex}" aria-label="Replace ${escapeHtml(exercise.name)}" title="Find a similar movement">${icon("swap")}</button><button class="inline-icon-button" data-action="exercise-note" data-exercise-index="${exerciseIndex}" aria-label="Add a note">${icon("edit")}</button><button class="inline-icon-button destructive-icon" data-action="remove-active-exercise" data-exercise-index="${exerciseIndex}" aria-label="Remove ${escapeHtml(exercise.name)} from this session" title="Remove from this session">${icon("trash")}</button></div></div><div class="previous-line">${escapeHtml(prevText)}</div>${exercise.sets.map((set, setIndex) => renderSetLine(exerciseIndex, setIndex, set)).join("")}<div class="log-card-actions"><button class="add-set" data-action="add-set" data-exercise-index="${exerciseIndex}">+ Add set</button>${exercise.sets.some((set) => !set.complete) ? `<button class="complete-all" data-action="complete-all-sets" data-exercise-index="${exerciseIndex}">${icon("check")} All sets done</button>` : ""}</div></section>`;
 }
 function renderSetLine(exerciseIndex, setIndex, set) {
   return `<div class="set-line ${set.complete ? "complete" : ""}"><div class="set-heading"><span>Set ${setIndex + 1}</span><button class="set-done" data-action="complete-set" data-exercise-index="${exerciseIndex}" data-set-index="${setIndex}" aria-label="${set.complete ? "Mark set incomplete" : "Complete set"}">${icon("check")}</button></div><div class="counter-row">${counterMarkup("weight", exerciseIndex, setIndex, set.weight, `${state.units}`, state.weightStep)}${counterMarkup("reps", exerciseIndex, setIndex, set.reps, "reps", 1)}</div></div>`;
@@ -500,6 +501,16 @@ function showNoteEditor(index) {
   const exercise = state.activeWorkout.exercises[index];
   showSheet(`${exercise.name} notes`, "A quick reminder for this session.", `<label class="field"><span class="field-label">Notes</span><textarea id="workout-note" class="textarea-field" maxlength="240">${escapeHtml(exercise.notes)}</textarea></label>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="save-note" data-exercise-index="${index}">SAVE</button>`);
 }
+function confirmNewPlan() {
+  const sessions = state.program.days.length;
+  showSheet("Delete this plan?", `"${state.program.name}" and its ${sessions} ${sessions === 1 ? "session" : "sessions"} will be deleted. Your workout history and personal bests stay saved.`, `<button class="link-button" data-action="export-backup">↓ Export a backup first</button>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="danger-button" data-action="confirm-new-plan">DELETE PLAN</button>`);
+}
+function startNewPlan() {
+  state.program = { name: "My Program", repeatWeekly: false, cycleWeeks: 1, activeCycleWeek: 1, cycleId: uid(), cycleStartedAt: todayKey(), days: [] };
+  state.todayWorkoutOverride = null; state.activeTab = "Plan";
+  save(); render();
+  showSheet("Start your new plan", "Your old plan is deleted. How would you like to add the new one?", `<div class="replacement-options"><button class="replacement-option" data-action="import-pdf"><span><strong>Import a workout PDF</strong><small>We'll read it, then you review</small></span>${icon("arrow")}</button><button class="replacement-option" data-action="new-plan-manual"><span><strong>Build it myself</strong><small>Add workout days one by one</small></span>${icon("arrow")}</button></div>`, `<button class="secondary-button" data-action="close-sheet">Later</button>`);
+}
 function confirmRemovePlanExercise(dayId, exerciseId) {
   const day = state.program.days.find((item) => item.id === dayId);
   const exercise = day?.exercises.find((item) => item.id === exerciseId);
@@ -543,18 +554,44 @@ function applyMovementReplacement(button, name, equipment) {
   document.querySelector(".overlay")?.remove();
   save(); render(); toast(`${escapeHtml(name)} added to your plan.`);
 }
-function showWorkoutDayPicker(scheduledDayId) {
+function todayOverride() {
   const override = state.todayWorkoutOverride;
-  const selectedId = override?.date === todayKey() && override.scheduledDayId === scheduledDayId ? override.workoutId : scheduledDayId;
-  // Every open session of the active week, always including the scheduled one so you can switch back.
-  const options = activeCycleDays().filter((day) => day.id === scheduledDayId || day.id === selectedId || !isWorkoutComplete(day));
-  if (options.length < 2) { toast("There are no other sessions available this week."); return; }
-  const content = `<div class="replacement-options">${options.map((day) => {
+  return override?.date === todayKey() ? override : null;
+}
+function showWorkoutDayPicker(scheduledDayId, week = Number(state.program.activeCycleWeek) || 1) {
+  const multiWeek = Number(state.program.cycleWeeks) > 1;
+  const activeWeek = Number(state.program.activeCycleWeek) || 1;
+  const override = todayOverride();
+  const selectedId = override && override.scheduledDayId === scheduledDayId ? override.workoutId : scheduledDayId;
+  const weeks = multiWeek ? [...new Set(state.program.days.map((day) => Number(day.programWeek) || 1))].sort((a, b) => a - b) : [];
+  const days = multiWeek ? state.program.days.filter((day) => (Number(day.programWeek) || 1) === week) : activeCycleDays();
+  const weekTabs = weeks.length > 1 ? `<div class="week-tabs" role="tablist" aria-label="Program week">${weeks.map((number) => `<button class="week-tab${number === week ? " selected" : ""}" data-action="picker-week" data-week="${number}" data-scheduled-day-id="${scheduledDayId}" role="tab" aria-selected="${number === week}">Week ${number}${number === activeWeek ? " ·&nbsp;now" : ""}</button>`).join("")}</div>` : "";
+  const list = days.map((day) => {
     const selected = day.id === selectedId;
-    const detail = [weekdayNames.includes(day.day) ? day.day : "", `${day.exercises.length} exercises`, day.id === scheduledDayId ? "Scheduled" : ""].filter(Boolean).join(" · ");
-    return `<button class="replacement-option${selected ? " selected" : ""}" data-action="choose-today-workout" data-scheduled-day-id="${scheduledDayId}" data-workout-id="${day.id}"${selected ? ' aria-current="true"' : ""}><span><strong>${escapeHtml(day.name)}</strong><small>${escapeHtml(detail)}</small></span>${icon(selected ? "check" : "arrow")}</button>`;
-  }).join("")}</div>`;
-  showSheet("Pick today's session", "For today only. Your program stays as planned, and your scheduled session counts as complete when you finish.", content, `<button class="secondary-button" data-action="close-sheet">Close</button>`);
+    const done = isWorkoutComplete(day) && !selected;
+    const detail = [weekdayNames.includes(day.day) ? day.day : "", `${day.exercises.length} ${day.exercises.length === 1 ? "exercise" : "exercises"}`, day.id === scheduledDayId ? "Scheduled" : "", done ? "Done" : ""].filter(Boolean).join(" · ");
+    return `<button class="replacement-option${selected ? " selected" : ""}${done ? " done" : ""}" data-action="choose-today-workout" data-scheduled-day-id="${scheduledDayId}" data-workout-id="${day.id}"${selected ? ' aria-current="true"' : ""}${done ? " disabled" : ""}><span><strong>${escapeHtml(day.name)}</strong><small>${escapeHtml(detail)}</small></span>${icon(selected || done ? "check" : "arrow")}</button>`;
+  }).join("") || `<p class="replacement-empty">No sessions in this week.</p>`;
+  const description = multiWeek ? "Pick a session in this week to swap today's workout, or pick another week to move your plan there." : "For today only. Your program stays as planned, and your scheduled session counts as complete when you finish.";
+  showSheet("Pick today's session", description, `${weekTabs}<div class="replacement-options">${list}</div>`, `<button class="secondary-button" data-action="close-sheet">Close</button>`);
+  document.querySelector(".week-tab.selected")?.scrollIntoView({ block: "nearest", inline: "center" });
+}
+function chooseTodayWorkout(scheduledDayId, workoutId) {
+  const day = state.program.days.find((item) => item.id === workoutId);
+  if (!day) return;
+  const activeWeek = Number(state.program.activeCycleWeek) || 1;
+  const dayWeek = Number(day.programWeek) || 1;
+  const pinned = Boolean(todayOverride()?.pinned);
+  if (Number(state.program.cycleWeeks) > 1 && dayWeek !== activeWeek) {
+    // Another week: move the plan there and make this session today's scheduled one.
+    state.program.activeCycleWeek = dayWeek;
+    state.todayWorkoutOverride = { date: todayKey(), scheduledDayId: day.id, workoutId: day.id, pinned: true };
+    save(); document.querySelector(".overlay")?.remove(); render(); toast(`Moved to Week ${dayWeek}. Today: ${escapeHtml(day.name)}`);
+    return;
+  }
+  const backToScheduled = workoutId === scheduledDayId;
+  state.todayWorkoutOverride = backToScheduled ? (pinned ? { date: todayKey(), scheduledDayId, workoutId: scheduledDayId, pinned } : null) : { date: todayKey(), scheduledDayId, workoutId, pinned };
+  save(); document.querySelector(".overlay")?.remove(); render(); toast(backToScheduled ? "Back to your scheduled session." : "Today's session changed. Your plan is unchanged.");
 }
 function showUnitsOnboarding() {
   document.querySelector(".onboarding").innerHTML = `<div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Track-Her</div><div class="onboarding-visual" style="min-height:140px"><div style="text-align:center"><div class="eyebrow">One last thing</div><h2 style="margin-top:8px">Your preferred units</h2></div></div><div class="eyebrow">Choose what feels familiar</div><div class="onboarding-actions" style="grid-template-columns:1fr 1fr"><button class="${state.units === "kg" ? "primary-button" : "secondary-button"}" data-action="set-units-onboarding" data-units="kg">kg <span style="font-weight:400">Kilograms</span></button><button class="${state.units === "lbs" ? "primary-button" : "secondary-button"}" data-action="set-units-onboarding" data-units="lbs">lbs <span style="font-weight:400">Pounds</span></button></div></div><div><div class="step-dots"><i></i><i></i><i class="active"></i></div><button class="primary-button" style="width:100%" data-action="complete-onboarding">GO TO MY WORKOUT ${icon("arrow")}</button></div>`;
@@ -1109,14 +1146,31 @@ function changeValue(button, delta) {
   const previous = Number(set[type]) || 0;
   const step = type === "weight" ? Number(state.weightStep) || 2.5 : 1;
   set[type] = Math.max(type === "weight" ? 0 : 1, Math.round((previous + delta * step) * 100) / 100);
+  set.edited = true;
   save(); render();
+}
+// "All sets done": copy the set you adjusted to the untouched ones, otherwise reuse last session's numbers.
+function completeAllSets(exerciseIndex) {
+  const exercise = state.activeWorkout.exercises[exerciseIndex];
+  const source = [...exercise.sets].reverse().find((set) => set.edited);
+  const previous = previousExercise({ id: exercise.exerciseId, name: exercise.name });
+  exercise.sets.forEach((set, index) => {
+    if (!set.complete && !set.edited) {
+      const fill = source || previous?.sets?.[index] || previous?.sets?.at(-1);
+      if (fill) { set.weight = fill.weight; set.reps = fill.reps; }
+    }
+    set.complete = true;
+  });
+  state.activeWorkout.restEndsAt = null; clearInterval(restInterval); restInterval = null;
+  save(); render();
+  toast(source ? `All sets done · ${escapeHtml(source.weight === "" ? "—" : source.weight)} ${state.units} × ${escapeHtml(source.reps)}` : previous ? "All sets done with last session's numbers." : "All sets done.");
 }
 function editValue(element) {
   const { type, exerciseIndex, setIndex, unit } = element.dataset;
   const set = state.activeWorkout.exercises[Number(exerciseIndex)].sets[Number(setIndex)];
   const input = document.createElement("input"); input.type = "number"; input.inputMode = "decimal"; input.min = type === "weight" ? "0" : "1"; input.step = type === "weight" ? String(state.weightStep) : "1"; input.value = set[type] ?? ""; input.setAttribute("aria-label", type === "weight" ? `Weight in ${unit}` : "Reps");
   element.replaceChildren(input); input.focus(); input.select();
-  const commit = () => { set[type] = input.value === "" ? "" : Math.max(type === "weight" ? 0 : 1, Number(input.value) || 0); save(); render(); };
+  const commit = () => { const value = input.value === "" ? "" : Math.max(type === "weight" ? 0 : 1, Number(input.value) || 0); if (value !== set[type]) set.edited = true; set[type] = value; save(); render(); };
   input.addEventListener("blur", commit, { once: true }); input.addEventListener("keydown", (event) => { if (event.key === "Enter") input.blur(); if (event.key === "Escape") render(); });
 }
 function addSet(exerciseIndex) {
@@ -1149,19 +1203,20 @@ document.addEventListener("click", (event) => {
     const scheduledWorkoutId = button.dataset.scheduledWorkoutId || button.dataset.workoutId;
     const scheduledWorkout = state.program.days.find((day) => day.id === scheduledWorkoutId);
     if (workout) {
-      state.todayWorkoutOverride = scheduledWorkoutId === workout.id ? null : { date: todayKey(), scheduledDayId: scheduledWorkoutId, workoutId: workout.id };
+      const pinned = Boolean(todayOverride()?.pinned);
+      state.todayWorkoutOverride = scheduledWorkoutId === workout.id && !pinned ? null : { date: todayKey(), scheduledDayId: scheduledWorkoutId, workoutId: workout.id, pinned };
       startWorkout(workout, scheduledWorkoutId, scheduledWorkout?.programWeek || workout.programWeek || 1);
     }
   }
   else if (action === "change-today-workout") showWorkoutDayPicker(button.dataset.scheduledDayId);
-  else if (action === "choose-today-workout") {
-    const backToScheduled = button.dataset.workoutId === button.dataset.scheduledDayId;
-    state.todayWorkoutOverride = backToScheduled ? null : { date: todayKey(), scheduledDayId: button.dataset.scheduledDayId, workoutId: button.dataset.workoutId };
-    save(); document.querySelector(".overlay")?.remove(); render(); toast(backToScheduled ? "Back to your scheduled session." : "Today's session changed. Your plan is unchanged.");
-  }
+  else if (action === "choose-today-workout") chooseTodayWorkout(button.dataset.scheduledDayId, button.dataset.workoutId);
+  else if (action === "picker-week") showWorkoutDayPicker(button.dataset.scheduledDayId, Number(button.dataset.week));
   else if (action === "edit-program") showProgramEditor();
   else if (action === "save-program") { const value = document.querySelector("#program-name")?.value.trim(); if (value) state.program.name = value; save(); document.querySelector(".overlay")?.remove(); render(); }
   else if (action === "add-day") showDayEditor();
+  else if (action === "new-plan") confirmNewPlan();
+  else if (action === "confirm-new-plan") startNewPlan();
+  else if (action === "new-plan-manual") showDayEditor();
   else if (action === "save-day") { const day = document.querySelector("#day-name").value; const name = document.querySelector("#workout-name").value.trim() || "Workout"; state.program.days.push({ id: uid(), day, name, exercises: [] }); state.program.days.sort((a, b) => weekdayNames.indexOf(a.day) - weekdayNames.indexOf(b.day)); save(); document.querySelector(".overlay")?.remove(); render(); }
   else if (action === "add-exercise") showExerciseEditor(button.dataset.dayId);
   else if (action === "remove-plan-exercise") confirmRemovePlanExercise(button.dataset.dayId, button.dataset.exerciseId);
@@ -1201,6 +1256,7 @@ document.addEventListener("click", (event) => {
   else if (action === "edit-value") editValue(button);
   else if (action === "complete-set") completeSet(Number(button.dataset.exerciseIndex), Number(button.dataset.setIndex));
   else if (action === "add-set") addSet(Number(button.dataset.exerciseIndex));
+  else if (action === "complete-all-sets") completeAllSets(Number(button.dataset.exerciseIndex));
   else if (action === "skip-rest") { state.activeWorkout.restEndsAt = null; clearInterval(restInterval); save(); render(); }
   else if (action === "add-rest") { state.activeWorkout.restEndsAt += 30000; save(); render(); }
   else if (action === "exercise-note") showNoteEditor(Number(button.dataset.exerciseIndex));
@@ -1221,6 +1277,20 @@ document.addEventListener("click", (event) => {
 });
 bindSelects();
 new MutationObserver(bindSelects).observe(app, { childList: true });
+// Freeze the page behind any open sheet (works on iOS too) and restore the scroll position on close.
+let lockedScrollY = null;
+new MutationObserver(() => {
+  const open = Boolean(document.querySelector(".overlay"));
+  if (open && lockedScrollY === null) {
+    lockedScrollY = window.scrollY;
+    Object.assign(document.body.style, { position: "fixed", top: `-${lockedScrollY}px`, left: "0", right: "0" });
+  } else if (!open && lockedScrollY !== null) {
+    const y = lockedScrollY;
+    lockedScrollY = null;
+    Object.assign(document.body.style, { position: "", top: "", left: "", right: "" });
+    window.scrollTo(0, y);
+  }
+}).observe(document.body, { childList: true });
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
   installPrompt = event;
