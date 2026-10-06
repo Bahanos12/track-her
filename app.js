@@ -1142,7 +1142,7 @@ function finishOnboarding() { state.onboarded = true; state.activeTab = "Home"; 
 const spreadsheetPattern = /\.(xlsx|xlsm|xlsb|xls|ods|csv)$/i;
 async function openPdfPicker() {
   const input = document.createElement("input"); input.type = "file";
-  input.accept = ".pdf,application/pdf,.xlsx,.xlsm,.xlsb,.xls,.ods,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv";
+  input.accept = ".pdf,application/pdf,.xlsx,.xlsm,.xlsb,.xls,.ods,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12,application/vnd.oasis.opendocument.spreadsheet,text/csv,text/comma-separated-values";
   input.addEventListener("change", async () => {
     const file = input.files?.[0]; if (!file) return;
     if (spreadsheetPattern.test(file.name)) { importSpreadsheet(file); return; }
@@ -2312,5 +2312,16 @@ window.addEventListener("beforeinstallprompt", (event) => {
   if (state.activeTab === "Profile" && !workoutOpen()) render();
 });
 window.addEventListener("appinstalled", () => { installPrompt = null; if (state.activeTab === "Profile") render(); });
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => { });
+// Updates: check for a new version when the app opens or comes back to the front, and switch to it as soon as
+// nothing is in the middle of being edited (saved data is kept; a workout in progress resumes where it was).
+if ("serviceWorker" in navigator) {
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let updateWaiting = false;
+  const applyUpdate = () => { if (updateWaiting && !document.querySelector(".overlay")) location.reload(); };
+  navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).then((registration) => {
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") registration.update().catch(() => { }); });
+  }).catch(() => { });
+  navigator.serviceWorker.addEventListener("controllerchange", () => { if (!hadController) return; updateWaiting = true; applyUpdate(); });
+  new MutationObserver(applyUpdate).observe(document.body, { childList: true });
+}
 initializeState();

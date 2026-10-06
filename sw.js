@@ -1,4 +1,4 @@
-const CACHE_NAME = "track-her-shell-v25";
+const CACHE_NAME = "track-her-shell-v26";
 const APP_SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon-maskable-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-48.png"];
 
 self.addEventListener("install", (event) => {
@@ -14,7 +14,8 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET" || new URL(event.request.url).origin !== self.location.origin) return;
   const cacheKey = event.request.mode === "navigate" ? "./index.html" : event.request;
-  event.respondWith(fetch(event.request).then((response) => {
+  // Always check the server first (skip the browser's HTTP cache) so a new version is picked up right away.
+  event.respondWith(fetch(event.request, { cache: "no-cache" }).then((response) => {
     if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put(cacheKey, response.clone()));
     return response;
   }).catch(async () => (await caches.match(cacheKey)) || (event.request.mode === "navigate" ? caches.match("./index.html") : Promise.reject(new Error("Offline asset unavailable.")))));
