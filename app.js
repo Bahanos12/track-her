@@ -647,7 +647,7 @@ function renderPlan() {
   const repeatTitle = multiWeek ? `Repeat full ${state.program.cycleWeeks}-week program` : "Repeat this cycle every week";
   const repeatHint = repeatWeekly ? (multiWeek ? "Starts again at Week 1 when the full program is complete." : "Your sessions restart next week.") : "This program stops after its sessions are complete.";
   const planSummary = multiWeek ? `${state.program.cycleWeeks}-week program · ${state.program.days.length} sessions` : `${state.program.days.length} training days`;
-  return `<section class="page-intro"><div class="eyebrow">Your routine</div><h1>Your plan</h1><p>Keep it simple. Show up, one session at a time.</p></section><div class="toolbar"><div><h3>${escapeHtml(state.program.name)}</h3><span class="eyebrow">${planSummary}</span></div><button class="inline-icon-button" data-action="edit-program" aria-label="Edit program name">${icon("edit")}</button></div><div class="button-row" style="margin-bottom:14px"><button class="secondary-button" data-action="import-pdf">↑ &nbsp;Import PDF</button><button class="secondary-button" data-action="add-day">+ &nbsp;Add workout</button></div><div class="setting-row cycle-setting"><div><strong>${repeatTitle}</strong><small>${repeatHint}</small></div><select class="select-field" data-change="repeat-weekly" aria-label="Repeat this cycle every week"><option value="false" ${repeatWeekly ? "" : "selected"}>One-time</option><option value="true" ${repeatWeekly ? "selected" : ""}>Repeat</option></select></div><div class="program-card">${state.program.days.map((day) => `<section class="day-block"><div class="day-heading"><button class="plan-edit-target day-edit" data-action="edit-day" data-day-id="${day.id}" aria-label="Edit ${escapeHtml(day.name)}"><span class="day-label"><i class="day-dot"></i>${escapeHtml(day.name)}<span class="edit-hint" aria-hidden="true">${icon("edit")}</span></span><span class="day-name">${multiWeek ? `Week ${day.programWeek || 1} · ` : ""}${escapeHtml(day.day)}</span></button><div class="day-actions"><button class="inline-icon-button" data-action="add-exercise" data-day-id="${day.id}" aria-label="Add exercise to ${escapeHtml(day.name)}">+</button><button class="inline-icon-button destructive-icon" data-action="delete-day" data-day-id="${day.id}" aria-label="Delete ${escapeHtml(day.name)}" title="Delete this day">${icon("trash")}</button></div></div>${day.exercises.length ? day.exercises.map((exercise) => `<div class="plan-exercise"><button class="plan-edit-target exercise-edit" data-action="edit-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Edit ${escapeHtml(exercise.name)}"><strong>${escapeHtml(exercise.name)}</strong><span class="edit-hint" aria-hidden="true">${icon("edit")}</span></button><div class="plan-exercise-detail"><span>${exercise.sets} × ${exercise.reps || "—"}${exercise.rest ? ` · ${exercise.rest}s rest` : ""}</span><button class="inline-icon-button" data-action="replace-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Replace ${escapeHtml(exercise.name)}" title="Find a similar movement">${icon("swap")}</button><button class="inline-icon-button destructive-icon" data-action="remove-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Remove ${escapeHtml(exercise.name)}" title="Remove from this workout">${icon("trash")}</button></div></div>`).join("") : `<p class="day-empty">No exercises yet. Tap + to add one.</p>`}</section>`).join("") || `<div class="empty-state"><h3>No workouts yet</h3><p>Add a workout day to begin.</p><button class="primary-button" data-action="add-day">ADD WORKOUT</button></div>`}</div><div class="section plan-footer"><button class="link-button" data-action="import-pdf">Import a workout PDF →</button>${state.program.days.length ? `<button class="secondary-button new-plan-button" data-action="new-plan">${icon("trash")} Delete plan &amp; start a new one</button>` : ""}</div>`;
+  return `<section class="page-intro"><div class="eyebrow">Your routine</div><h1>Your plan</h1><p>Keep it simple. Show up, one session at a time.</p></section><div class="toolbar"><div><h3>${escapeHtml(state.program.name)}</h3><span class="eyebrow">${planSummary}</span></div><button class="inline-icon-button" data-action="edit-program" aria-label="Edit program name">${icon("edit")}</button></div><div class="button-row" style="margin-bottom:14px"><button class="secondary-button" data-action="import-pdf">↑ &nbsp;Import file</button><button class="secondary-button" data-action="add-day">+ &nbsp;Add workout</button></div><div class="setting-row cycle-setting"><div><strong>${repeatTitle}</strong><small>${repeatHint}</small></div><select class="select-field" data-change="repeat-weekly" aria-label="Repeat this cycle every week"><option value="false" ${repeatWeekly ? "" : "selected"}>One-time</option><option value="true" ${repeatWeekly ? "selected" : ""}>Repeat</option></select></div><div class="program-card">${state.program.days.map((day) => `<section class="day-block"><div class="day-heading"><button class="plan-edit-target day-edit" data-action="edit-day" data-day-id="${day.id}" aria-label="Edit ${escapeHtml(day.name)}"><span class="day-label"><i class="day-dot"></i>${escapeHtml(day.name)}<span class="edit-hint" aria-hidden="true">${icon("edit")}</span></span><span class="day-name">${multiWeek ? `Week ${day.programWeek || 1} · ` : ""}${escapeHtml(day.day)}</span></button><div class="day-actions"><button class="inline-icon-button" data-action="add-exercise" data-day-id="${day.id}" aria-label="Add exercise to ${escapeHtml(day.name)}">+</button><button class="inline-icon-button destructive-icon" data-action="delete-day" data-day-id="${day.id}" aria-label="Delete ${escapeHtml(day.name)}" title="Delete this day">${icon("trash")}</button></div></div>${day.exercises.length ? day.exercises.map((exercise) => `<div class="plan-exercise"><button class="plan-edit-target exercise-edit" data-action="edit-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Edit ${escapeHtml(exercise.name)}"><strong>${escapeHtml(exercise.name)}</strong><span class="edit-hint" aria-hidden="true">${icon("edit")}</span></button><div class="plan-exercise-detail"><span>${exercise.sets} × ${exercise.reps || "—"}${exercise.rest ? ` · ${exercise.rest}s rest` : ""}</span><button class="inline-icon-button" data-action="replace-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Replace ${escapeHtml(exercise.name)}" title="Find a similar movement">${icon("swap")}</button><button class="inline-icon-button destructive-icon" data-action="remove-plan-exercise" data-day-id="${day.id}" data-exercise-id="${exercise.id}" aria-label="Remove ${escapeHtml(exercise.name)}" title="Remove from this workout">${icon("trash")}</button></div></div>`).join("") : `<p class="day-empty">No exercises yet. Tap + to add one.</p>`}</section>`).join("") || `<div class="empty-state"><h3>No workouts yet</h3><p>Add a workout day to begin.</p><button class="primary-button" data-action="add-day">ADD WORKOUT</button></div>`}</div><div class="section plan-footer"><button class="link-button" data-action="import-pdf">Import a workout PDF or spreadsheet →</button>${state.program.days.length ? `<button class="secondary-button new-plan-button" data-action="new-plan">${icon("trash")} Delete plan &amp; start a new one</button>` : ""}</div>`;
 }
 function allExerciseNames() { return [...new Set([...state.program.days.flatMap((day) => day.exercises.map((exercise) => exercise.name)), ...state.history.flatMap((workout) => workout.exercises.map((exercise) => exercise.name))])].sort(); }
 function recordsFor(name) { return state.history.flatMap((workout) => workout.exercises.filter((exercise) => exercise.name.toLowerCase() === name.toLowerCase()).flatMap((exercise) => exercise.sets.map((set) => ({ ...set, date: workout.date })))); }
@@ -1040,7 +1040,7 @@ function startNewPlan() {
   state.program = { name: "My Program", repeatWeekly: false, cycleWeeks: 1, activeCycleWeek: 1, cycleId: uid(), cycleStartedAt: todayKey(), days: [] };
   state.todayWorkoutOverride = null; state.activeTab = "Plan";
   save(); render();
-  showSheet("Start your new plan", "Your old plan is deleted. How would you like to add the new one?", `<div class="replacement-options"><button class="replacement-option" data-action="use-recommended-plan"><span><strong>Use a recommended plan</strong><small>${escapeHtml(recommendedPlan().name)} · 3 days a week</small></span>${icon("arrow")}</button><button class="replacement-option" data-action="import-pdf"><span><strong>Import a workout PDF</strong><small>We'll read it, then you review</small></span>${icon("arrow")}</button><button class="replacement-option" data-action="new-plan-manual"><span><strong>Build it myself</strong><small>Add workout days one by one</small></span>${icon("arrow")}</button></div>`, `<button class="secondary-button" data-action="close-sheet">Later</button>`);
+  showSheet("Start your new plan", "Your old plan is deleted. How would you like to add the new one?", `<div class="replacement-options"><button class="replacement-option" data-action="use-recommended-plan"><span><strong>Use a recommended plan</strong><small>${escapeHtml(recommendedPlan().name)} · 3 days a week</small></span>${icon("arrow")}</button><button class="replacement-option" data-action="import-pdf"><span><strong>Import a workout file</strong><small>PDF or spreadsheet. You review it first</small></span>${icon("arrow")}</button><button class="replacement-option" data-action="new-plan-manual"><span><strong>Build it myself</strong><small>Add workout days one by one</small></span>${icon("arrow")}</button></div>`, `<button class="secondary-button" data-action="close-sheet">Later</button>`);
 }
 function confirmRemovePlanExercise(dayId, exerciseId) {
   const day = state.program.days.find((item) => item.id === dayId);
@@ -1130,7 +1130,7 @@ function showUnitsOnboarding() {
   document.querySelector(".onboarding").innerHTML = `<div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual" style="min-height:140px"><div style="text-align:center"><div class="eyebrow">One last thing</div><h2 style="margin-top:8px">Your preferred units</h2></div></div><div class="eyebrow">Choose what feels familiar</div><div class="onboarding-actions" style="grid-template-columns:1fr 1fr"><button class="${state.units === "kg" ? "primary-button" : "secondary-button"}" data-action="set-units-onboarding" data-units="kg">kg <span style="font-weight:400">Kilograms</span></button><button class="${state.units === "lbs" ? "primary-button" : "secondary-button"}" data-action="set-units-onboarding" data-units="lbs">lbs <span style="font-weight:400">Pounds</span></button></div></div><div><div class="step-dots"><i></i><i></i><i class="active"></i></div><button class="primary-button" style="width:100%" data-action="complete-onboarding">GO TO MY WORKOUT ${icon("arrow")}</button></div>`;
 }
 function showPlanChoice() {
-  document.querySelector(".onboarding").innerHTML = `<div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual" style="min-height:140px"><div style="text-align:center"><div class="eyebrow">Start with what you have</div><h2 style="margin-top:8px">Your plan, your way</h2></div></div><div class="eyebrow">How would you like to add your plan?</div><div class="onboarding-actions"><button class="secondary-button" data-action="import-pdf"><span><strong>Upload workout PDF</strong><span>We'll read it together, then you review</span></span>${icon("arrow")}</button><button class="secondary-button" data-action="create-program"><span><strong>Create my plan</strong><span>Build a simple weekly schedule</span></span>${icon("arrow")}</button><button class="link-button" data-action="use-sample">Explore with a sample plan</button></div></div><div><div class="step-dots"><i></i><i class="active"></i><i></i></div><button class="link-button" data-action="onboarding-back">Back</button></div>`;
+  document.querySelector(".onboarding").innerHTML = `<div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual" style="min-height:140px"><div style="text-align:center"><div class="eyebrow">Start with what you have</div><h2 style="margin-top:8px">Your plan, your way</h2></div></div><div class="eyebrow">How would you like to add your plan?</div><div class="onboarding-actions"><button class="secondary-button" data-action="import-pdf"><span><strong>Upload a workout file</strong><span>PDF or spreadsheet (Excel, CSV). You review it first</span></span>${icon("arrow")}</button><button class="secondary-button" data-action="create-program"><span><strong>Create my plan</strong><span>Build a simple weekly schedule</span></span>${icon("arrow")}</button><button class="link-button" data-action="use-sample">Explore with a sample plan</button></div></div><div><div class="step-dots"><i></i><i class="active"></i><i></i></div><button class="link-button" data-action="onboarding-back">Back</button></div>`;
 }
 function useSamplePlan() {
   state.onboarded = true; state.activeTab = "Home"; save(); render();
@@ -1139,10 +1139,13 @@ function showCycleOnboarding() {
   document.querySelector(".onboarding").innerHTML = `<div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual" style="min-height:140px"><div style="text-align:center"><div class="eyebrow">Optional</div><h2 style="margin-top:8px">Train with your cycle</h2></div></div><p class="onboarding-copy">Would you like Honna to adapt your training based on your menstrual cycle? It learns from your own patterns and always asks before changing a workout. Your data stays on this device.</p></div><div><div class="onboarding-actions"><button class="primary-button" data-action="cycle-onboarding-yes">YES, SET IT UP ${icon("arrow")}</button><button class="secondary-button" data-action="cycle-onboarding-no">Not now</button></div></div>`;
 }
 function finishOnboarding() { state.onboarded = true; state.activeTab = "Home"; save(); render(); }
+const spreadsheetPattern = /\.(xlsx|xlsm|xlsb|xls|ods|csv)$/i;
 async function openPdfPicker() {
-  const input = document.createElement("input"); input.type = "file"; input.accept = ".pdf,application/pdf";
+  const input = document.createElement("input"); input.type = "file";
+  input.accept = ".pdf,application/pdf,.xlsx,.xlsm,.xlsb,.xls,.ods,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv";
   input.addEventListener("change", async () => {
     const file = input.files?.[0]; if (!file) return;
+    if (spreadsheetPattern.test(file.name)) { importSpreadsheet(file); return; }
     try {
       showSheet("Reading your plan", "Pulling the text from your PDF. Nothing is saved until you confirm.", `<div class="empty-state"><p id="import-progress">This usually takes a few seconds…</p></div>`);
       const extracted = await extractPdfText(file, (message) => {
@@ -1154,6 +1157,137 @@ async function openPdfPicker() {
     } catch (error) { document.querySelector(".overlay")?.remove(); showSheet("Couldn't read this PDF", "Try a text-based PDF, or add your plan manually.", `<div class="empty-state"><p>${escapeHtml(error.message || "This PDF could not be read.")}</p></div>`, `<button class="secondary-button" data-action="close-sheet">Close</button><button class="primary-button" data-action="create-program">CREATE MY PLAN</button>`); }
   });
   input.click();
+}
+// ---------- Spreadsheets (Excel, Google Sheets downloads, LibreOffice, CSV) ----------
+// Cells are read directly (no PDF/OCR step), so values like 67%, 8RPE or 1+2F come through exactly.
+let sheetJsLoader = null;
+function loadSheetJs() {
+  sheetJsLoader ||= new Promise((resolve, reject) => {
+    if (window.XLSX) { resolve(window.XLSX); return; }
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    script.onload = () => resolve(window.XLSX);
+    script.onerror = () => { sheetJsLoader = null; reject(new Error("Couldn't load the spreadsheet reader. Check your internet connection and try again.")); };
+    document.head.append(script);
+  });
+  return sheetJsLoader;
+}
+async function importSpreadsheet(file) {
+  try {
+    showSheet("Reading your plan", "Reading the spreadsheet. Nothing is saved until you confirm.", `<div class="empty-state"><p>This usually takes a second…</p></div>`);
+    const XLSX = await loadSheetJs();
+    // raw: CSV text stays text (otherwise "6-8" reps would turn into a date).
+    const workbook = /\.csv$/i.test(file.name) ? XLSX.read(await file.text(), { type: "string", raw: true }) : XLSX.read(await file.arrayBuffer());
+    const sheets = workbook.SheetNames.map((name) => ({ name, rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, raw: false, blankrows: true, defval: "" }).map((row) => row.map((cell) => String(cell ?? "").replace(/\s+/g, " ").trim())) }));
+    importDraft = parseWorkoutSheets(sheets);
+    const fullTitle = file.name.replace(spreadsheetPattern, "").replace(/\s*\(\d+\)$/, "").replace(/[_+]+/g, " ").replace(/\s+-\s+/g, " · ").replace(/\s+/g, " ").trim();
+    importProgramName = (fullTitle.length > 40 ? fullTitle.slice(0, 41).replace(/\s+\S*$/, "") : fullTitle).replace(/[\s\-–—·:,]+$/, "") || "Imported Program";
+    if (!importDraft.length) importDraft = parseWorkoutText(sheets.map((sheet) => sheet.rows.map((row) => row.filter(Boolean).join(" ")).join("\n")).join("\n"));
+    showImportReview(file.name);
+  } catch (error) {
+    document.querySelector(".overlay")?.remove();
+    showSheet("Couldn't read this spreadsheet", "Try saving it as .xlsx or .csv, or add your plan manually.", `<div class="empty-state"><p>${escapeHtml(error.message || "This file could not be read.")}</p></div>`, `<button class="secondary-button" data-action="close-sheet">Close</button><button class="primary-button" data-action="create-program">CREATE MY PLAN</button>`);
+  }
+}
+// Normalise one spreadsheet value: "8RPE" → effort, "67%" → load target, "0"/"x" → nothing.
+function sheetValueKind(value) {
+  if (!value || /^(x|-|—|0|n\/?a)$/i.test(value)) return null;
+  if (/^(rpe|rir)\s*\d|^\d+(?:\.\d+)?\s*(rpe|rir)$/i.test(value)) return "effort";
+  if (/%/.test(value)) return "intensity";
+  return "other";
+}
+// Workout tables laid out as an "Exercise" column plus one or more column groups (Sets, Reps, Load, Rest…),
+// each group usually a week. Week/day labels come from the title row above each header.
+function parseWorkoutSheets(sheets) {
+  const sessions = [];
+  let lastWeek = 0;
+  for (const sheet of sheets) {
+    const { rows } = sheet;
+    let sheetGroupWeeks = null;
+    const sheetHasWeek = rows.some((row) => row.some((cell) => /\bweek\s*\d/i.test(cell)));
+    let undatedWeek = null, blockIndex = 0;
+    for (let r = 0; r < rows.length; r += 1) {
+      const row = rows[r];
+      const kinds = row.map((cell) => (cell && isImportHeaderCell(cell) ? classifyImportHeader(cell) : null));
+      const exerciseCol = kinds.indexOf("exercise");
+      const groupStarts = kinds.map((kind, col) => (col > exerciseCol && (kind === "sets" || kind === "setsreps") ? col : -1)).filter((col) => col >= 0);
+      if (exerciseCol < 0 || !groupStarts.length || !kinds.some((kind) => kind === "reps" || kind === "setsreps")) continue;
+      const groups = groupStarts.map((start, index) => {
+        const end = (groupStarts[index + 1] ?? row.length) - 1;
+        const columns = [];
+        for (let col = start; col <= end; col += 1) if (kinds[col] && kinds[col] !== "ignore" && kinds[col] !== "week") columns.push({ col, kind: kinds[col], header: row[col] });
+        return { start, end, columns, label: "" };
+      });
+      // Title row: the nearest non-empty row above (within 2 rows).
+      let titleRow = null;
+      for (let up = r - 1; up >= Math.max(0, r - 2); up -= 1) if (rows[up].some(Boolean)) { titleRow = rows[up]; break; }
+      const titles = (titleRow || []).map((text, col) => ({ text, col })).filter((cell) => cell.text);
+      for (const title of titles) {
+        const group = groups.find((item, index) => (index === 0 ? title.col <= item.end : title.col >= item.start && title.col <= item.end));
+        if (group) group.label = [group.label, title.text].filter(Boolean).join(" ");
+      }
+      const weekOf = (label) => Number(label.match(/\bweek\s*(\d{1,2})/i)?.[1]) || null;
+      if (groups.some((group) => weekOf(group.label))) sheetGroupWeeks = groups.map((group) => weekOf(group.label));
+      const dayTitle = titles.map((title) => title.text).find((text) => /\bday\s*\d/i.test(text)) || "";
+      const dayNumber = Number(dayTitle.match(/\bday\s*(\d{1,2})/i)?.[1]) || null;
+      const dayLabel = importLabelText((dayNumber ? dayTitle.replace(/^.*?\bday\s*\d{1,2}\b/i, "") : titles.map((title) => title.text).join(" ")).replace(/\bweek\s*\d{1,2}\b,?/gi, ""));
+      if (!sheetHasWeek && undatedWeek === null) undatedWeek = lastWeek + 1;
+      blockIndex += 1;
+      // Exercise rows until a blank row or the next header/title.
+      const blockSessions = groups.map(() => []);
+      let previousName = "";
+      for (let rr = r + 1; rr < rows.length; rr += 1) {
+        const line = rows[rr];
+        if (!line.some(Boolean)) break;
+        if (line.some((cell) => cell && classifyImportHeader(cell) === "exercise" && isImportHeaderCell(cell))) break;
+        const name = line[exerciseCol] || previousName;
+        if (!line[exerciseCol] && !groups.some((group) => group.columns.some((column) => line[column.col]))) break;
+        if (!name) continue;
+        if (line[exerciseCol]) previousName = line[exerciseCol];
+        groups.forEach((group, groupIndex) => {
+          const cells = { exercise: [{ text: name, header: "Exercise" }] };
+          let setsText = "", repsText = "";
+          for (const { col, kind, header } of group.columns) {
+            const value = line[col];
+            if (kind === "sets" || kind === "setsreps") { setsText = value; continue; }
+            if (kind === "reps") { repsText = value; continue; }
+            const valueKind = sheetValueKind(value);
+            if (!valueKind) continue;
+            if (valueKind === "effort") (cells.effort ||= []).push({ text: value.replace(/^(\d+(?:\.\d+)?)\s*(rpe|rir)$/i, (m, number, unit) => `${unit.toUpperCase()} ${number}`), header: "RPE" });
+            else if (valueKind === "intensity") (cells.intensity ||= []).push({ text: value, header });
+            else if (kind === "tempo" || kind === "rest" || kind === "warmup" || kind === "substitution" || kind === "notes" || kind === "technique") (cells[kind] ||= []).push({ text: value, header });
+            else if (/^\d+\s*(s|sec|secs|seconds)$/i.test(value) && /^x?$/i.test(repsText)) repsText = value;
+            else (cells.notes ||= []).push({ text: /^opener$/i.test(value) ? "Opener (competition attempt)" : value, header });
+          }
+          if (!setsText && !repsText) return;
+          const plus = setsText.match(/^(\d{1,2})\s*\+\s*(\d{1,2})\s*([a-z])?$/i);
+          if (plus) {
+            cells.sets = [{ text: String(Number(plus[1]) + Number(plus[2])), header: "Sets" }];
+            (cells.notes ||= []).unshift({ text: `Sets: ${setsText} (${plus[1]} top set + ${plus[2]} back-off)`, header: "Sets" });
+          } else if (setsText) cells.sets = [{ text: setsText, header: "Sets" }];
+          if (repsText && !/^x$/i.test(repsText)) cells.reps = [{ text: repsText, header: "Reps" }];
+          const exercise = buildImportedExercise(cells);
+          if (exercise) blockSessions[groupIndex].push(exercise);
+        });
+      }
+      groups.forEach((group, groupIndex) => {
+        if (!blockSessions[groupIndex].length) return;
+        const week = weekOf(group.label) || sheetGroupWeeks?.[groupIndex] || (sheetHasWeek ? lastWeek || 1 : undatedWeek);
+        lastWeek = Math.max(lastWeek, week);
+        sessions.push({ week, dayNumber, dayLabel, order: sessions.length, exercises: blockSessions[groupIndex] });
+      });
+    }
+  }
+  if (!sessions.length) return [];
+  const weeks = new Set(sessions.map((session) => session.week));
+  const counts = new Map();
+  return sessions.sort((a, b) => a.week - b.week || a.order - b.order).map((session) => {
+    const number = (counts.get(session.week) || 0) + 1;
+    counts.set(session.week, number);
+    const day = session.dayNumber ? `Day ${session.dayNumber}` : session.dayLabel ? "" : `Day ${number}`;
+    const title = [day, session.dayLabel].filter(Boolean).join(" · ");
+    return { id: uid(), day: "Unscheduled", programWeek: session.week, name: weeks.size > 1 || session.week > 1 ? `Week ${session.week} · ${title}` : title, exercises: session.exercises };
+  });
 }
 async function extractPdfText(file, onProgress = () => { }) {
   const pdfjs = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs");
