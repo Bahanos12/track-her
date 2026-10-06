@@ -206,3 +206,10 @@ button.exercise-row { width: 100%; border-width: 0 0 1px; border-style: solid; b
 .onboarding-name { margin: 4px 0 14px; }
 .undo-card { border-color: var(--tint-border); background: var(--tint-bg); }
 .history-actions { display: flex; gap: 8px; margin-top: 12px; }.history-actions > * { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; font-size: 12px; }.history-actions svg { width: 15px; height: 15px; }.destructive-text { color: #9d5365; }
+.resume-bar { position: fixed; z-index: 19; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(calc(100% - 24px), 616px); display: flex; align-items: center; gap: 11px; min-height: 56px; padding: 9px 12px 9px 14px; border: 0; border-radius: 7px 16px 7px 16px; background: var(--sage-dark); color: white; text-align: left; box-shadow: 0 10px 26px rgba(40, 20, 30, .22); cursor: pointer; }
+.resume-dot { flex: 0 0 9px; height: 9px; border-radius: 50%; background: var(--sun); box-shadow: 0 0 0 4px rgba(255,255,255,.14); animation: resume-pulse 1.6s ease-in-out infinite; }@keyframes resume-pulse { 50% { opacity: .45; } }
+.resume-text { flex: 1; min-width: 0; }.resume-text strong { display: block; overflow: hidden; font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }.resume-text small { display: block; margin-top: 2px; color: var(--on-accent-muted); font-size: 11px; }
+.resume-cta { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; padding: 8px 11px; border-radius: 9px; background: var(--sun); color: #392b31; font-size: 12px; font-weight: 800; }.resume-cta svg { width: 14px; height: 14px; }
+.app-shell.has-resume-bar { padding-bottom: calc(170px + env(safe-area-inset-bottom)); }
+.discard-workout { display: block; margin: -12px auto 28px; color: #9d5365; }
+@media (min-width: 700px) { .resume-bar { bottom: 102px; } }

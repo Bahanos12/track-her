@@ -38,7 +38,7 @@ function applyTheme() {
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.colors[0]);
 }
 const defaultState = () => ({
-  version: 1, onboarded: false, name: "Sarah", units: "kg", weightStep: 2.5, theme: "plum", activeTab: "Home", activeWorkout: null, todayWorkoutOverride: null,
+  version: 1, onboarded: false, name: "Sarah", units: "kg", weightStep: 2.5, theme: "plum", activeTab: "Home", activeWorkout: null, workoutPaused: false, todayWorkoutOverride: null,
   sex: "", // "female" | "male" | "unspecified" ("" = not asked yet)
   // Optional cycle-aware training. "asked" records that the opt-in question was answered.
   menstrual: { asked: false, enabled: false, periodStarts: [], cycleLength: null, periodLength: 5, regularity: "unknown", contraception: "", checkins: [], dismissedInsights: {} },
@@ -184,7 +184,7 @@ function firstWeekWithSessions(from) {
 function confirmDeleteDay(dayId) {
   const day = state.program.days.find((item) => item.id === dayId);
   if (!day) return;
-  if (state.activeWorkout?.dayId === dayId || state.activeWorkout?.workoutId === dayId) { toast("Finish or exit the workout in progress first."); return; }
+  if (state.activeWorkout?.dayId === dayId || state.activeWorkout?.workoutId === dayId) { toast("Finish or discard the workout in progress first."); return; }
   const multiWeek = Number(state.program.cycleWeeks) > 1;
   const renumbers = /\bday\s*\d{1,2}\b/i.test(day.name);
   const where = multiWeek ? ` in Week ${Number(day.programWeek) || 1}` : "";
@@ -539,17 +539,68 @@ function beginCheckedWorkout(choice) {
   save(); render();
   if (choice !== "normal") toast(choice === "light" ? "Lighter session ready. Your plan is unchanged." : "Adapted workout ready. Your plan is unchanged.");
 }
+// A workout in progress is either open (full screen) or paused while you look around the app.
+function workoutOpen() { return Boolean(state.activeWorkout) && !state.workoutPaused; }
 function render() {
   applyTheme();
   if (!state.onboarded) return renderOnboarding();
-  if (state.activeWorkout) { app.innerHTML = renderWorkout(); return; }
+  if (workoutOpen()) { app.innerHTML = renderWorkout(); syncBackHistory(); return; }
   const tab = state.activeTab;
-  app.innerHTML = `${renderTopbar()}${tab === "Home" ? renderHome() : tab === "Plan" ? renderPlan() : tab === "Progress" ? renderProgress() : renderProfile()}${renderNav()}`;
+  app.innerHTML = `${renderTopbar()}${tab === "Home" ? renderHome() : tab === "Plan" ? renderPlan() : tab === "Progress" ? renderProgress() : renderProfile()}${renderResumeBar()}${renderNav()}`;
+  app.classList.toggle("has-resume-bar", Boolean(state.activeWorkout));
+  syncBackHistory();
   if (tab === "Progress") {
     const historySection = app.querySelector(".history-list")?.closest(".section");
     historySection?.insertAdjacentHTML("beforebegin", `<section class="section"><div class="section-heading"><h2>Workout calendar</h2><span class="eyebrow">${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}</span></div>${renderCalendar()}</section>`);
   }
 }
+function renderResumeBar() {
+  const workout = state.activeWorkout;
+  if (!workout) return "";
+  const done = workout.exercises.reduce((total, exercise) => total + exercise.sets.filter((set) => set.complete).length, 0);
+  const total = workout.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
+  return `<button class="resume-bar" data-action="resume-workout"><span class="resume-dot" aria-hidden="true"></span><span class="resume-text"><strong>${escapeHtml(workout.name)} in progress</strong><small>${done} of ${total} sets logged</small></span><span class="resume-cta">Resume ${icon("arrow")}</span></button>`;
+}
+function pauseWorkout(message = "Workout paused. Resume it anytime.") {
+  if (!state.activeWorkout) return;
+  state.workoutPaused = true; state.activeTab = "Home";
+  save(); render(); toast(message);
+}
+function resumeWorkout() {
+  if (!state.activeWorkout) return;
+  state.workoutPaused = false;
+  save(); document.querySelector(".overlay")?.remove(); render();
+  if (state.activeWorkout.restEndsAt) runRestTicker();
+}
+function discardWorkout() {
+  state.activeWorkout = null; state.workoutPaused = false; state.todayWorkoutOverride = null; state.activeTab = "Home";
+  clearInterval(restInterval); restInterval = null;
+  save(); document.querySelector(".overlay")?.remove(); render(); toast("Workout discarded. Nothing was saved.");
+}
+// The phone's Back button: close an open sheet first, then pause an open workout, otherwise leave the app as usual.
+let backDepth = Number(history.state?.honnaDepth) || 0, ignoreNextPop = false, handlingPop = false;
+function syncBackHistory() {
+  const wanted = (state.onboarded && workoutOpen() ? 1 : 0) + (document.querySelector(".overlay") ? 1 : 0);
+  // history.go() is asynchronous: wait for it to land before pushing or stepping again.
+  if (ignoreNextPop || handlingPop || wanted === backDepth) return;
+  if (wanted > backDepth) {
+    while (backDepth < wanted) { backDepth += 1; history.pushState({ honnaDepth: backDepth }, ""); }
+  } else {
+    ignoreNextPop = true;
+    history.go(wanted - backDepth);
+    backDepth = wanted;
+  }
+}
+window.addEventListener("popstate", () => {
+  if (ignoreNextPop) { ignoreNextPop = false; backDepth = Math.max(0, Number(history.state?.honnaDepth) || 0); syncBackHistory(); return; }
+  backDepth = Math.max(0, Number(history.state?.honnaDepth) || 0);
+  handlingPop = true;
+  try {
+    if (document.querySelector(".overlay")) document.querySelector(".overlay").remove();
+    else if (workoutOpen()) pauseWorkout();
+  } finally { handlingPop = false; }
+  syncBackHistory();
+});
 function renderTopbar() {
   return `<header class="topbar"><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><button class="top-action" data-action="profile" aria-label="Open profile">${icon("profile")}</button></header>`;
 }
@@ -583,7 +634,7 @@ function renderHome() {
   const alternatives = Number(state.program.cycleWeeks) > 1 ? [true] : activeCycleDays().filter((day) => day.id !== scheduledWorkout.id); // other sessions to swap to, or done ones to reopen
   return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderUndoFinishCard()}${renderCycleCard()}
     <div class="section-heading"><h2>${isToday ? "Today's workout" : "Up next"}</h2><button class="link-button" data-tab="Plan">View plan</button></div>
-    <section class="today-card"><div class="today-top"><span class="eyebrow">${escapeHtml(scheduledWorkout.day)} · ${isToday ? "Today" : "Coming up"}${alternate ? " · Changed for today" : ""}</span><div class="today-card-actions"><span class="date-chip">${weekdayNames.includes(scheduledWorkout.day) ? prettyDate(keyFromDate(weekdayDate(scheduledWorkout.day)), { month: "short", day: "numeric" }) : "Any day"}</span>${alternatives.length ? `<button class="today-options-button" data-action="change-today-workout" data-scheduled-day-id="${scheduledWorkout.id}" aria-label="More workout options" title="More workout options">${icon("more")}</button>` : ""}</div></div><div class="today-title">${escapeHtml(workout.name)}</div><p class="today-meta">${workout.exercises.length} exercises <span aria-hidden="true">·</span> Approximately ${estimateDuration(workout)} min</p><div class="today-bottom"><div class="avatar-stack"><span class="tiny-dots"><i></i><i></i><i></i></span><span>${escapeHtml(state.program.name)}</span></div><button class="primary-button" data-action="start-workout" data-workout-id="${workout.id}" data-scheduled-workout-id="${scheduledWorkout.id}">START WORKOUT ${icon("arrow")}</button></div></section>
+    <section class="today-card"><div class="today-top"><span class="eyebrow">${escapeHtml(scheduledWorkout.day)} · ${isToday ? "Today" : "Coming up"}${alternate ? " · Changed for today" : ""}</span><div class="today-card-actions"><span class="date-chip">${weekdayNames.includes(scheduledWorkout.day) ? prettyDate(keyFromDate(weekdayDate(scheduledWorkout.day)), { month: "short", day: "numeric" }) : "Any day"}</span>${alternatives.length ? `<button class="today-options-button" data-action="change-today-workout" data-scheduled-day-id="${scheduledWorkout.id}" aria-label="More workout options" title="More workout options">${icon("more")}</button>` : ""}</div></div><div class="today-title">${escapeHtml(workout.name)}</div><p class="today-meta">${workout.exercises.length} exercises <span aria-hidden="true">·</span> Approximately ${estimateDuration(workout)} min</p><div class="today-bottom"><div class="avatar-stack"><span class="tiny-dots"><i></i><i></i><i></i></span><span>${escapeHtml(state.program.name)}</span></div><button class="primary-button" data-action="start-workout" data-workout-id="${workout.id}" data-scheduled-workout-id="${scheduledWorkout.id}">${state.activeWorkout?.workoutId === workout.id ? "RESUME WORKOUT" : "START WORKOUT"} ${icon("arrow")}</button></div></section>
     <section class="section"><div class="section-heading"><h2>Today's flow</h2><span class="eyebrow">${workout.exercises.length} moves</span></div><div class="exercise-preview">${workout.exercises.map((exercise, index) => `<button class="exercise-row" data-action="preview-exercise" data-day-id="${workout.id}" data-exercise-id="${exercise.id}" aria-label="Preview ${escapeHtml(exercise.name)}"><span class="exercise-number">${String(index + 1).padStart(2, "0")}</span><span class="exercise-row-main"><span class="exercise-row-name">${escapeHtml(exercise.name)}</span>${exercise.notes ? `<span class="exercise-row-detail">${escapeHtml(exercise.notes)}</span>` : ""}</span><span class="target-pill">${exercise.sets} × ${exercise.reps || "—"}</span></button>`).join("") || `<div class="empty-state"><p>Add exercises to this workout in your plan.</p></div>`}</div></section>
     ${last ? `<section class="section"><div class="section-heading"><h2>Last workout</h2><button class="link-button" data-tab="Progress">History</button></div><div class="last-workout"><div><div class="exercise-row-name">${escapeHtml(last.name)}</div><div class="exercise-row-detail">Completed ${prettyDate(last.date, { weekday: "long", month: "short", day: "numeric" })}</div></div><span class="last-icon">${icon("history")}</span></div></section>` : ""}
     <section class="section"><div class="section-heading"><h2>This week</h2></div><div class="week-summary"><span class="week-count">${thisWeek}<span style="font-size:15px;color:#9ba49c"> / ${cycleDays.length || 0}</span></span><div class="week-copy">workouts completed<small>Every session adds up.</small><div class="progress-track"><span style="width:${Math.min(100, cycleDays.length ? thisWeek / cycleDays.length * 100 : 0)}%"></span></div></div></div></section>`;
@@ -647,6 +698,9 @@ function activeExerciseFrom(exercise) {
   const count = Math.max(Number(exercise.sets) || 1, previous?.sets?.length || 0);
   return { exerciseId: exercise.id, name: exercise.name, targetSets: Number(exercise.sets) || 1, targetReps: Number(exercise.reps) || 0, rest: Number(exercise.rest) || 0, notes: exercise.notes || "", sets: Array.from({ length: count }, (_, index) => ({ weight: previous?.sets?.[index]?.weight ?? previous?.sets?.at(-1)?.weight ?? "", reps: previous?.sets?.[index]?.reps ?? previous?.sets?.at(-1)?.reps ?? (Number(exercise.reps) || 0), complete: false })) };
 }
+function beginStartFlow(start) {
+  if (menstrual().enabled && cycleAvailable()) showReadinessCheck(start); else launchWorkout(start.workoutId, start.scheduledWorkoutId);
+}
 function launchWorkout(workoutId, scheduledWorkoutId = workoutId, readiness = null) {
   const workout = state.program.days.find((day) => day.id === workoutId);
   if (!workout) return;
@@ -657,6 +711,7 @@ function launchWorkout(workoutId, scheduledWorkoutId = workoutId, readiness = nu
   if (readiness) state.activeWorkout.readiness = readiness;
 }
 function startWorkout(workout, scheduledWorkoutId = workout.id, scheduledProgramWeek = workout.programWeek || 1) {
+  state.workoutPaused = false;
   state.activeWorkout = { id: uid(), dayId: scheduledWorkoutId, workoutId: workout.id, programWeek: scheduledProgramWeek, cycleId: state.program.cycleId, name: workout.name, date: todayKey(), startedAt: Date.now(), exercises: workout.exercises.map(activeExerciseFrom) };
   save(); render();
 }
@@ -683,7 +738,7 @@ function renderWorkout() {
   const workout = state.activeWorkout;
   const completed = workout.exercises.reduce((total, exercise) => total + exercise.sets.filter((set) => set.complete).length, 0);
   const total = workout.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
-  return `<header class="workout-header"><button class="inline-icon-button" data-action="exit-workout" aria-label="Exit workout">‹</button><div><h2>${escapeHtml(workout.name)}</h2><p>${prettyDate(workout.date, { weekday: "long", month: "short", day: "numeric" })}</p></div><button class="link-button" style="margin-left:auto" data-action="finish-workout">Finish</button></header><div class="workout-progress"><div class="workout-progress-label"><span>Your session</span><span>${completed} of ${total} sets</span></div><div class="progress-track"><span style="width:${total ? completed / total * 100 : 0}%"></span></div></div>${workout.restEndsAt ? renderRestTimer() : ""}${workout.exercises.map((exercise, index) => renderLogExercise(exercise, index)).join("")}<button class="secondary-button add-exercise-button" data-action="add-active-exercise">+ &nbsp;Add exercise</button><button class="primary-button finish-button" data-action="finish-workout">FINISH WORKOUT ${icon("check")}</button>`;
+  return `<header class="workout-header"><button class="inline-icon-button" data-action="exit-workout" aria-label="Pause workout and go back">‹</button><div><h2>${escapeHtml(workout.name)}</h2><p>${prettyDate(workout.date, { weekday: "long", month: "short", day: "numeric" })}</p></div><button class="link-button" style="margin-left:auto" data-action="finish-workout">Finish</button></header><div class="workout-progress"><div class="workout-progress-label"><span>Your session</span><span>${completed} of ${total} sets</span></div><div class="progress-track"><span style="width:${total ? completed / total * 100 : 0}%"></span></div></div>${workout.restEndsAt ? renderRestTimer() : ""}${workout.exercises.map((exercise, index) => renderLogExercise(exercise, index)).join("")}<button class="secondary-button add-exercise-button" data-action="add-active-exercise">+ &nbsp;Add exercise</button><button class="primary-button finish-button" data-action="finish-workout">FINISH WORKOUT ${icon("check")}</button><button class="link-button discard-workout" data-action="discard-workout">Discard workout</button>`;
 }
 function renderLogExercise(exercise, exerciseIndex) {
   const previous = previousExercise({ id: exercise.exerciseId, name: exercise.name });
@@ -729,7 +784,7 @@ function completeSet(exerciseIndex, setIndex) {
 }
 function renderUndoFinishCard() {
   const last = state.lastFinish;
-  if (!last || last.date !== todayKey() || !state.history.some((item) => item.id === last.historyId)) return "";
+  if (!last || last.allLogged || last.date !== todayKey() || !state.history.some((item) => item.id === last.historyId)) return "";
   return `<section class="cycle-card undo-card"><div><strong>Finished ${escapeHtml(last.workout.name)} by mistake?</strong><small>Reopen it to keep logging. Your plan goes back to how it was.</small></div><button class="secondary-button cycle-log" data-action="reopen-workout" data-history-id="${last.historyId}" data-resume="1">Reopen</button></section>`;
 }
 // Personal bests from what is actually in history (after a workout is removed, nothing stale remains).
@@ -747,7 +802,7 @@ function rebuildPersonalBests() {
 function reopenWorkout(historyId, resume = true) {
   const entry = state.history.find((item) => item.id === historyId);
   if (!entry) return;
-  if (state.activeWorkout) { toast("Finish or exit the workout in progress first."); return; }
+  if (state.activeWorkout) { toast("Finish or discard the workout in progress first."); return; }
   const snapshot = state.lastFinish?.historyId === historyId ? state.lastFinish : null;
   state.history = state.history.filter((item) => item.id !== historyId);
   const program = state.program;
@@ -761,6 +816,7 @@ function reopenWorkout(historyId, resume = true) {
     };
     if (entry.readiness && !workout.readiness) workout.readiness = entry.readiness;
     state.activeWorkout = workout;
+    state.workoutPaused = false;
     state.todayWorkoutOverride = snapshot?.override || null;
   }
   if (snapshot) state.lastFinish = null;
@@ -778,7 +834,9 @@ function finishWorkout() {
   const workout = state.activeWorkout;
   if (!workout) return;
   // Everything finishing changes, so "Reopen" can put it back exactly (taken before any auto-fill).
-  const undo = { historyId: workout.id, date: todayKey(), workout: JSON.parse(JSON.stringify({ ...workout, restEndsAt: null })), override: state.todayWorkoutOverride ? { ...state.todayWorkoutOverride } : null,
+  // Every set ticked by hand = a deliberate finish, so no "by mistake?" prompt (Reopen stays in History and ⋯).
+  const allLogged = workout.exercises.length > 0 && workout.exercises.every((exercise) => exercise.sets.length && exercise.sets.every((set) => set.complete));
+  const undo = { historyId: workout.id, date: todayKey(), allLogged, workout: JSON.parse(JSON.stringify({ ...workout, restEndsAt: null })), override: state.todayWorkoutOverride ? { ...state.todayWorkoutOverride } : null,
     program: { activeCycleWeek: state.program.activeCycleWeek, cycleId: state.program.cycleId, cycleStartedAt: state.program.cycleStartedAt } };
   // Finishing without ticking anything means "I did it as planned": log every set with the usual numbers.
   const quickFinish = !workout.exercises.some((exercise) => exercise.sets.some((set) => set.complete));
@@ -801,12 +859,13 @@ function finishWorkout() {
       if (!old || score > old.score) { state.prs[key] = { weight: set.weight, reps: set.reps, score }; if (!old || Number(set.weight) > Number(old.weight)) newPR = { name: exercise.name, ...set, previous: old }; }
     }
     state.lastFinish = undo;
+    state.workoutPaused = false;
     state.activeWorkout = null; state.todayWorkoutOverride = null; state.activeTab = "Home"; save(); render();
     const personalBest = newPR ? `<span class="toast-line">New personal best · ${escapeHtml(newPR.name)} ${newPR.weight} ${state.units} × ${newPR.reps}</span>` : "";
     const quickLine = quickFinish ? `<span class="toast-line">All sets logged with your usual numbers.</span>` : "";
     toast(`<strong class="toast-title">Workout complete 🎉</strong>${quickLine}${personalBest}<span class="toast-line">${nextWorkoutMessage(previousWeek, previousCycleId)}</span>`, Boolean(newPR), 5000);
   } else {
-    state.activeWorkout = null; state.activeTab = "Home"; save(); render(); toast("Workout closed without completed sets.");
+    state.activeWorkout = null; state.workoutPaused = false; state.activeTab = "Home"; save(); render(); toast("Workout closed without completed sets.");
   }
   clearInterval(restInterval); restInterval = null;
 }
@@ -1922,7 +1981,10 @@ document.addEventListener("click", (event) => {
   else if (action === "create-program") { document.querySelector(".overlay")?.remove(); if (!state.onboarded) state.program = { name: "My Program", repeatWeekly: false, days: [] }; state.onboarded = true; state.activeTab = "Plan"; save(); render(); showDayEditor(); }
   else if (action === "start-workout") {
     const start = { workoutId: button.dataset.workoutId, scheduledWorkoutId: button.dataset.scheduledWorkoutId || button.dataset.workoutId };
-    if (menstrual().enabled && cycleAvailable()) showReadinessCheck(start); else launchWorkout(start.workoutId, start.scheduledWorkoutId);
+    const current = state.activeWorkout;
+    if (current && current.workoutId === start.workoutId) resumeWorkout();
+    else if (current) showSheet(`${current.name} is still in progress`, "Resume it, or discard it and start the new session.", "", `<button class="secondary-button" data-action="discard-and-start" data-workout-id="${start.workoutId}" data-scheduled-workout-id="${start.scheduledWorkoutId}">Discard &amp; start new</button><button class="primary-button" data-action="resume-workout">RESUME</button>`);
+    else beginStartFlow(start);
   }
   else if (action === "cycle-setup") showCycleSetup();
   else if (action === "save-cycle-setup") saveCycleSetup();
@@ -2005,7 +2067,11 @@ document.addEventListener("click", (event) => {
   else if (action === "save-import-once") commitImportedPlan(false);
   else if (action === "save-import-weekly") commitImportedPlan(true);
   else if (action === "parse-pasted") parsePastedText();
-  else if (action === "exit-workout") { state.activeWorkout = null; state.activeTab = "Home"; save(); clearInterval(restInterval); render(); }
+  else if (action === "exit-workout") pauseWorkout();
+  else if (action === "resume-workout") resumeWorkout();
+  else if (action === "discard-workout") showSheet("Discard this workout?", "Everything you logged in this session will be lost. Your plan stays as it is.", "", `<button class="secondary-button" data-action="close-sheet">Keep it</button><button class="danger-button" data-action="confirm-discard-workout">DISCARD</button>`);
+  else if (action === "confirm-discard-workout") discardWorkout();
+  else if (action === "discard-and-start") { const start = { workoutId: button.dataset.workoutId, scheduledWorkoutId: button.dataset.scheduledWorkoutId }; discardWorkout(); beginStartFlow(start); }
   else if (action === "finish-workout") finishWorkout();
   else if (action === "adjust-value") changeValue(button, Number(button.dataset.dir));
   else if (action === "edit-value") editValue(button);
@@ -2057,11 +2123,12 @@ new MutationObserver(() => {
     Object.assign(document.body.style, { position: "", top: "", left: "", right: "" });
     window.scrollTo(0, y);
   }
+  syncBackHistory();
 }).observe(document.body, { childList: true });
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
   installPrompt = event;
-  if (state.activeTab === "Profile" && !state.activeWorkout) render();
+  if (state.activeTab === "Profile" && !workoutOpen()) render();
 });
 window.addEventListener("appinstalled", () => { installPrompt = null; if (state.activeTab === "Profile") render(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => { });
