@@ -1227,6 +1227,12 @@ function parseWorkoutSheets(sheets) {
         if (group) group.label = [group.label, title.text].filter(Boolean).join(" ");
       }
       const weekOf = (label) => Number(label.match(/\bweek\s*(\d{1,2})/i)?.[1]) || null;
+      // One long table with a "Day" (and/or "Week") column: each row goes to the session named in that column.
+      const dayCol = row.findIndex((cell, col) => col !== exerciseCol && /^(training\s*)?(day|session|workout)s?(\s*(name|#|no\.?|number))?$/i.test(cell));
+      const weekCol = row.findIndex((cell, col) => col !== exerciseCol && /^(week|wk)s?(\s*(#|no\.?|number))?$/i.test(cell));
+      const longMode = groups.length === 1 && (dayCol >= 0 || weekCol >= 0);
+      const longSessions = new Map();
+      let currentDay = "", currentWeek = "";
       if (groups.some((group) => weekOf(group.label))) sheetGroupWeeks = groups.map((group) => weekOf(group.label));
       const dayTitle = titles.map((title) => title.text).find((text) => /\bday\s*\d/i.test(text)) || "";
       const dayNumber = Number(dayTitle.match(/\bday\s*(\d{1,2})/i)?.[1]) || null;
@@ -1238,8 +1244,14 @@ function parseWorkoutSheets(sheets) {
       let previousName = "";
       for (let rr = r + 1; rr < rows.length; rr += 1) {
         const line = rows[rr];
-        if (!line.some(Boolean)) break;
+        if (!line.some(Boolean)) { if (longMode) continue; break; }
         if (line.some((cell) => cell && classifyImportHeader(cell) === "exercise" && isImportHeaderCell(cell))) break;
+        if (longMode) {
+          // Blank Day/Week cells (merged cells in Excel) continue the one above; a new day starts fresh.
+          if (dayCol >= 0 && line[dayCol] && line[dayCol] !== currentDay) { currentDay = line[dayCol]; previousName = ""; }
+          if (weekCol >= 0 && line[weekCol] && line[weekCol] !== currentWeek) { currentWeek = line[weekCol]; previousName = ""; }
+          if (!line[exerciseCol] && !groups.some((group) => group.columns.some((column) => line[column.col]))) continue;
+        }
         const name = line[exerciseCol] || previousName;
         if (!line[exerciseCol] && !groups.some((group) => group.columns.some((column) => line[column.col]))) break;
         if (!name) continue;
@@ -1267,8 +1279,20 @@ function parseWorkoutSheets(sheets) {
           } else if (setsText) cells.sets = [{ text: setsText, header: "Sets" }];
           if (repsText && !/^x$/i.test(repsText)) cells.reps = [{ text: repsText, header: "Reps" }];
           const exercise = buildImportedExercise(cells);
-          if (exercise) blockSessions[groupIndex].push(exercise);
+          if (exercise && longMode) {
+            const key = `${currentWeek}\u0000${currentDay}`;
+            if (!longSessions.has(key)) longSessions.set(key, { week: currentWeek, day: currentDay, exercises: [] });
+            longSessions.get(key).exercises.push(exercise);
+          } else if (exercise) blockSessions[groupIndex].push(exercise);
         });
+      }
+      for (const entry of longSessions.values()) {
+        const week = Number(entry.week.match(/\d{1,2}/)?.[0]) || sheetGroupWeeks?.[0] || (sheetHasWeek ? lastWeek || 1 : undatedWeek);
+        lastWeek = Math.max(lastWeek, week);
+        const weekday = weekdayNames.find((name) => name.toLowerCase() === entry.day.toLowerCase() || name.slice(0, 3).toLowerCase() === entry.day.toLowerCase());
+        const number = Number(entry.day.match(/^(?:day|session|workout)?\s*#?\s*(\d{1,2})\b/i)?.[1]) || null;
+        const rest = number ? entry.day.replace(/^(?:day|session|workout)?\s*#?\s*\d{1,2}\b/i, "") : weekday ? "" : entry.day;
+        sessions.push({ week, dayNumber: number, dayLabel: importLabelText(rest), weekday: weekday || "", order: sessions.length, exercises: entry.exercises });
       }
       groups.forEach((group, groupIndex) => {
         if (!blockSessions[groupIndex].length) return;
@@ -1284,9 +1308,9 @@ function parseWorkoutSheets(sheets) {
   return sessions.sort((a, b) => a.week - b.week || a.order - b.order).map((session) => {
     const number = (counts.get(session.week) || 0) + 1;
     counts.set(session.week, number);
-    const day = session.dayNumber ? `Day ${session.dayNumber}` : session.dayLabel ? "" : `Day ${number}`;
-    const title = [day, session.dayLabel].filter(Boolean).join(" · ");
-    return { id: uid(), day: "Unscheduled", programWeek: session.week, name: weeks.size > 1 || session.week > 1 ? `Week ${session.week} · ${title}` : title, exercises: session.exercises };
+    const day = session.dayNumber ? `Day ${session.dayNumber}` : session.dayLabel || session.weekday ? "" : `Day ${number}`;
+    const title = [day, session.dayLabel || session.weekday].filter(Boolean).join(" · ");
+    return { id: uid(), day: session.weekday || "Unscheduled", programWeek: session.week, name: weeks.size > 1 || session.week > 1 ? `Week ${session.week} · ${title}` : title, exercises: session.exercises };
   });
 }
 async function extractPdfText(file, onProgress = () => { }) {
