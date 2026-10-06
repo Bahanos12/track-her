@@ -158,16 +158,20 @@ function activeCycleDays() {
 function advanceProgramCycle() {
   const cycleWeeks = Number(state.program.cycleWeeks) || 1;
   if (cycleWeeks < 2) return;
-  const activeWeek = Number(state.program.activeCycleWeek) || 1;
-  const weekDays = activeCycleDays();
-  if (!weekDays.length || !weekDays.every(isWorkoutComplete)) return;
-  const nextWeek = firstWeekWithSessions(activeWeek + 1);
-  if (nextWeek) state.program.activeCycleWeek = nextWeek;
-  else if (state.program.repeatWeekly) {
-    state.program.activeCycleWeek = firstWeekWithSessions(1) || 1;
+  // Keep moving past weeks that are already done (possible after reopening an older workout).
+  for (let guard = 0; guard < cycleWeeks; guard += 1) {
+    const activeWeek = Number(state.program.activeCycleWeek) || 1;
+    const weekDays = activeCycleDays();
+    if (!weekDays.length || !weekDays.every(isWorkoutComplete)) return;
+    const nextWeek = firstWeekWithSessions(activeWeek + 1);
+    if (nextWeek) { state.program.activeCycleWeek = nextWeek; continue; }
+    if (state.program.repeatWeekly) {
+      state.program.activeCycleWeek = firstWeekWithSessions(1) || 1;
       state.program.cycleId = uid();
       state.program.cycleStartedAt = todayKey();
-  } else state.program.activeCycleWeek = cycleWeeks + 1;
+    } else state.program.activeCycleWeek = cycleWeeks + 1;
+    return;
+  }
 }
 // First week from `from` up to the program's end that still has sessions (weeks can be emptied by deleting days).
 function firstWeekWithSessions(from) {
@@ -570,12 +574,12 @@ function renderHome() {
     : state.history.filter((item) => new Date(`${item.date}T12:00:00`).getTime() >= weekStart().getTime()).length;
   if (!workout && state.program.days.length) {
     const repeatMessage = state.program.repeatWeekly ? "Your weekly cycle starts again next week." : "This plan is complete. Turn on weekly repeat in Plan if you'd like to reuse it.";
-    return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section><div class="surface empty-state"><h3>${state.program.repeatWeekly ? "Your week is complete" : "Plan complete"}</h3><p>${repeatMessage}</p><button class="primary-button" data-tab="Plan">REVIEW MY PLAN</button></div>`;
+    return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderUndoFinishCard()}<div class="surface empty-state"><h3>${state.program.repeatWeekly ? "Your week is complete" : "Plan complete"}</h3><p>${repeatMessage}</p><button class="primary-button" data-tab="Plan">REVIEW MY PLAN</button></div>`;
   }
   if (!workout) return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section><div class="surface empty-state"><h3>Your next chapter starts here</h3><p>Start with a recommended plan, create your own, or import the one you already follow.</p><div class="empty-actions"><button class="primary-button" data-action="use-recommended-plan">USE ${escapeHtml(recommendedPlan().name.toUpperCase())}</button><button class="secondary-button" data-action="create-program">Create my plan</button></div></div>`;
   const isToday = scheduledWorkout.day === todayDay();
   const alternatives = Number(state.program.cycleWeeks) > 1 ? [true] : activeCycleDays().filter((day) => day.id !== scheduledWorkout.id && !isWorkoutComplete(day));
-  return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderCycleCard()}
+  return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderUndoFinishCard()}${renderCycleCard()}
     <div class="section-heading"><h2>${isToday ? "Today's workout" : "Up next"}</h2><button class="link-button" data-tab="Plan">View plan</button></div>
     <section class="today-card"><div class="today-top"><span class="eyebrow">${escapeHtml(scheduledWorkout.day)} · ${isToday ? "Today" : "Coming up"}${alternate ? " · Changed for today" : ""}</span><div class="today-card-actions"><span class="date-chip">${weekdayNames.includes(scheduledWorkout.day) ? prettyDate(keyFromDate(weekdayDate(scheduledWorkout.day)), { month: "short", day: "numeric" }) : "Any day"}</span>${alternatives.length ? `<button class="today-options-button" data-action="change-today-workout" data-scheduled-day-id="${scheduledWorkout.id}" aria-label="More workout options" title="More workout options">${icon("more")}</button>` : ""}</div></div><div class="today-title">${escapeHtml(workout.name)}</div><p class="today-meta">${workout.exercises.length} exercises <span aria-hidden="true">·</span> Approximately ${estimateDuration(workout)} min</p><div class="today-bottom"><div class="avatar-stack"><span class="tiny-dots"><i></i><i></i><i></i></span><span>${escapeHtml(state.program.name)}</span></div><button class="primary-button" data-action="start-workout" data-workout-id="${workout.id}" data-scheduled-workout-id="${scheduledWorkout.id}">START WORKOUT ${icon("arrow")}</button></div></section>
     <section class="section"><div class="section-heading"><h2>Today's flow</h2><span class="eyebrow">${workout.exercises.length} moves</span></div><div class="exercise-preview">${workout.exercises.map((exercise, index) => `<button class="exercise-row" data-action="preview-exercise" data-day-id="${workout.id}" data-exercise-id="${exercise.id}" aria-label="Preview ${escapeHtml(exercise.name)}"><span class="exercise-number">${String(index + 1).padStart(2, "0")}</span><span class="exercise-row-main"><span class="exercise-row-name">${escapeHtml(exercise.name)}</span>${exercise.notes ? `<span class="exercise-row-detail">${escapeHtml(exercise.notes)}</span>` : ""}</span><span class="target-pill">${exercise.sets} × ${exercise.reps || "—"}</span></button>`).join("") || `<div class="empty-state"><p>Add exercises to this workout in your plan.</p></div>`}</div></section>
@@ -601,7 +605,7 @@ function renderProgress() {
   const records = selected ? recordsFor(selected).sort((a, b) => a.date.localeCompare(b.date)) : [];
   const best = records.reduce((max, set) => Math.max(max, Number(set.weight) || 0), 0);
   const historyCount = state.history.length;
-  return `<section class="page-intro"><div class="eyebrow">Small steps, real strength</div><h1>Your progress</h1><p>Notice how far you've come.</p></section><div class="metric-grid"><div class="metric-card"><strong>${historyCount}</strong><span>workouts completed</span></div><div class="metric-card"><strong>${best ? `${best} ${state.units}` : "—"}</strong><span>best ${selected ? escapeHtml(selected) : "lift"}</span></div></div><section class="chart-card"><div class="chart-toolbar"><h3>Strength over time</h3>${names.length ? `<select class="select-field" style="width:auto;max-width:55%;min-height:37px;padding:6px 9px" data-change="progress-exercise">${names.map((name) => `<option ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</select>` : ""}</div>${records.length ? renderChart(records) : `<div class="empty-state" style="padding:30px 8px 15px"><h3>Your first PR is waiting</h3><p>Complete a workout to see your lifts build over time.</p><button class="secondary-button" data-tab="Home">Go to today's workout</button></div>`}</section><section class="section"><div class="section-heading"><h2>Workout history</h2><span class="eyebrow">${historyCount} sessions</span></div><div class="history-list">${state.history.length ? state.history.map((workout) => `<details class="history-item"><summary class="history-summary"><div><strong>${escapeHtml(workout.name)}</strong><span>${prettyDate(workout.date, { weekday: "short", month: "short", day: "numeric", year: "numeric" })} · ${workout.exercises.length} exercises</span></div>${icon("arrow")}</summary><div class="history-content">${workout.exercises.map((exercise) => `<div class="history-exercise"><strong>${escapeHtml(exercise.name)}</strong><p>${exercise.sets.map((set) => `${set.weight || 0} ${state.units} × ${set.reps}`).join(" · ")}</p>${exercise.notes ? `<p>${escapeHtml(exercise.notes)}</p>` : ""}</div>`).join("")}</div></details>`).join("") : `<div class="surface empty-state"><p>Completed workouts will appear here.</p></div>`}</div></section>`;
+  return `<section class="page-intro"><div class="eyebrow">Small steps, real strength</div><h1>Your progress</h1><p>Notice how far you've come.</p></section><div class="metric-grid"><div class="metric-card"><strong>${historyCount}</strong><span>workouts completed</span></div><div class="metric-card"><strong>${best ? `${best} ${state.units}` : "—"}</strong><span>best ${selected ? escapeHtml(selected) : "lift"}</span></div></div><section class="chart-card"><div class="chart-toolbar"><h3>Strength over time</h3>${names.length ? `<select class="select-field" style="width:auto;max-width:55%;min-height:37px;padding:6px 9px" data-change="progress-exercise">${names.map((name) => `<option ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</select>` : ""}</div>${records.length ? renderChart(records) : `<div class="empty-state" style="padding:30px 8px 15px"><h3>Your first PR is waiting</h3><p>Complete a workout to see your lifts build over time.</p><button class="secondary-button" data-tab="Home">Go to today's workout</button></div>`}</section><section class="section"><div class="section-heading"><h2>Workout history</h2><span class="eyebrow">${historyCount} sessions</span></div><div class="history-list">${state.history.length ? state.history.map((workout) => `<details class="history-item"><summary class="history-summary"><div><strong>${escapeHtml(workout.name)}</strong><span>${prettyDate(workout.date, { weekday: "short", month: "short", day: "numeric", year: "numeric" })} · ${workout.exercises.length} exercises</span></div>${icon("arrow")}</summary><div class="history-content">${workout.exercises.map((exercise) => `<div class="history-exercise"><strong>${escapeHtml(exercise.name)}</strong><p>${exercise.sets.map((set) => `${set.weight || 0} ${state.units} × ${set.reps}`).join(" · ")}</p>${exercise.notes ? `<p>${escapeHtml(exercise.notes)}</p>` : ""}</div>`).join("")}<div class="history-actions"><button class="secondary-button" data-action="reopen-workout" data-history-id="${workout.id}" data-resume="1">${icon("history")} Reopen</button><button class="secondary-button destructive-text" data-action="reopen-workout" data-history-id="${workout.id}" data-resume="0">${icon("trash")} Remove</button></div></div></details>`).join("") : `<div class="surface empty-state"><p>Completed workouts will appear here.</p></div>`}</div></section>`;
 }
 let progressSelection = "";
 function renderCalendar() {
@@ -721,9 +725,59 @@ function completeSet(exerciseIndex, setIndex) {
   if (!set.complete) state.activeWorkout.restEndsAt = null;
   save(); render();
 }
+function renderUndoFinishCard() {
+  const last = state.lastFinish;
+  if (!last || last.date !== todayKey() || !state.history.some((item) => item.id === last.historyId)) return "";
+  return `<section class="cycle-card undo-card"><div><strong>Finished ${escapeHtml(last.workout.name)} by mistake?</strong><small>Reopen it to keep logging. Your plan goes back to how it was.</small></div><button class="secondary-button cycle-log" data-action="reopen-workout" data-history-id="${last.historyId}" data-resume="1">Reopen</button></section>`;
+}
+// Personal bests from what is actually in history (after a workout is removed, nothing stale remains).
+function rebuildPersonalBests() {
+  const prs = {};
+  for (const workout of [...state.history].reverse()) for (const exercise of workout.exercises) for (const set of exercise.sets) {
+    if (!(Number(set.weight) > 0)) continue;
+    const key = exercise.name.toLowerCase(), score = Number(set.weight) * (1 + Number(set.reps) / 30);
+    if (!prs[key] || score > prs[key].score) prs[key] = { weight: set.weight, reps: set.reps, score };
+  }
+  state.prs = prs;
+}
+// Undo a finished workout: take it out of history and (if `resume`) open it again to keep logging.
+// The most recent finish is restored exactly from its snapshot, including any week change or program restart.
+function reopenWorkout(historyId, resume = true) {
+  const entry = state.history.find((item) => item.id === historyId);
+  if (!entry) return;
+  if (state.activeWorkout) { toast("Finish or exit the workout in progress first."); return; }
+  const snapshot = state.lastFinish?.historyId === historyId ? state.lastFinish : null;
+  state.history = state.history.filter((item) => item.id !== historyId);
+  const program = state.program;
+  if (snapshot && snapshot.program.cycleId === entry.cycleId) Object.assign(program, snapshot.program);
+  else if (entry.cycleId === program.cycleId && Number(program.cycleWeeks) > 1 && Number(entry.programWeek || 1) < Number(program.activeCycleWeek)) program.activeCycleWeek = Number(entry.programWeek) || 1;
+  rebuildPersonalBests();
+  if (resume) {
+    const workout = snapshot ? snapshot.workout : {
+      id: entry.id, dayId: entry.programDayId, workoutId: entry.programDayId, programWeek: entry.programWeek, cycleId: entry.cycleId, name: entry.name, date: entry.date, startedAt: Date.now() - (entry.duration || 1) * 60000,
+      exercises: entry.exercises.map((exercise) => ({ exerciseId: exercise.exerciseId, name: exercise.name, targetSets: exercise.sets.length, targetReps: Number(exercise.sets[0]?.reps) || 0, rest: Number(getExercise(exercise.exerciseId, exercise.name)?.rest) || 0, notes: exercise.notes || "", sets: exercise.sets.map((set) => ({ ...set, complete: true })) })),
+    };
+    if (entry.readiness && !workout.readiness) workout.readiness = entry.readiness;
+    state.activeWorkout = workout;
+    state.todayWorkoutOverride = snapshot?.override || null;
+  }
+  if (snapshot) state.lastFinish = null;
+  save(); document.querySelector(".overlay")?.remove(); render();
+  toast(resume ? "Workout reopened. Finish it again when you're done." : "Removed. That session is open again in your plan.");
+}
+function confirmReopen(historyId, resume) {
+  const entry = state.history.find((item) => item.id === historyId);
+  if (!entry) return;
+  const when = prettyDate(entry.date, { weekday: "long", month: "short", day: "numeric" });
+  if (resume) showSheet(`Reopen ${entry.name}?`, `From ${when}. It leaves your history until you finish it again, and your plan goes back to before you finished it.`, "", `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="confirm-reopen" data-history-id="${historyId}" data-resume="1">REOPEN</button>`);
+  else showSheet(`Remove ${entry.name}?`, `From ${when}. Its logged sets are deleted and the session counts as not done.`, "", `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="danger-button" data-action="confirm-reopen" data-history-id="${historyId}" data-resume="0">REMOVE</button>`);
+}
 function finishWorkout() {
   const workout = state.activeWorkout;
   if (!workout) return;
+  // Everything finishing changes, so "Reopen" can put it back exactly (taken before any auto-fill).
+  const undo = { historyId: workout.id, date: todayKey(), workout: JSON.parse(JSON.stringify({ ...workout, restEndsAt: null })), override: state.todayWorkoutOverride ? { ...state.todayWorkoutOverride } : null,
+    program: { activeCycleWeek: state.program.activeCycleWeek, cycleId: state.program.cycleId, cycleStartedAt: state.program.cycleStartedAt } };
   // Finishing without ticking anything means "I did it as planned": log every set with the usual numbers.
   const quickFinish = !workout.exercises.some((exercise) => exercise.sets.some((set) => set.complete));
   if (quickFinish) workout.exercises.forEach(fillAndCompleteSets);
@@ -744,6 +798,7 @@ function finishWorkout() {
       const score = Number(set.weight) * (1 + Number(set.reps) / 30);
       if (!old || score > old.score) { state.prs[key] = { weight: set.weight, reps: set.reps, score }; if (!old || Number(set.weight) > Number(old.weight)) newPR = { name: exercise.name, ...set, previous: old }; }
     }
+    state.lastFinish = undo;
     state.activeWorkout = null; state.todayWorkoutOverride = null; state.activeTab = "Home"; save(); render();
     const personalBest = newPR ? `<span class="toast-line">New personal best · ${escapeHtml(newPR.name)} ${newPR.weight} ${state.units} × ${newPR.reps}</span>` : "";
     const quickLine = quickFinish ? `<span class="toast-line">All sets logged with your usual numbers.</span>` : "";
@@ -1952,6 +2007,8 @@ document.addEventListener("click", (event) => {
   else if (action === "edit-value") editValue(button);
   else if (action === "complete-set") completeSet(Number(button.dataset.exerciseIndex), Number(button.dataset.setIndex));
   else if (action === "add-set") addSet(Number(button.dataset.exerciseIndex));
+  else if (action === "reopen-workout") { if (button.closest(".undo-card")) reopenWorkout(button.dataset.historyId, true); else confirmReopen(button.dataset.historyId, button.dataset.resume === "1"); }
+  else if (action === "confirm-reopen") reopenWorkout(button.dataset.historyId, button.dataset.resume === "1");
   else if (action === "add-active-exercise") showAddActiveExercise();
   else if (action === "save-active-exercise") saveActiveExercise();
   else if (action === "delete-set") deleteSet(Number(button.dataset.exerciseIndex), Number(button.dataset.setIndex));

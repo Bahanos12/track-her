@@ -204,3 +204,5 @@ button.exercise-row { width: 100%; border-width: 0 0 1px; border-style: solid; b
 .greeting .eyebrow + h1 { margin-top: 8px; }
 .cycle-card .cycle-day { flex: 0 0 56px; width: 56px; height: 56px; align-content: center; gap: 2px; }.cycle-card .cycle-day b { font-size: 19px; }.cycle-card .cycle-day small { display: block; margin: 0; font-size: 9px; line-height: 1; letter-spacing: .8px; text-transform: uppercase; color: var(--sage-dark); opacity: .75; }
 .onboarding-name { margin: 4px 0 14px; }
+.undo-card { border-color: var(--tint-border); background: var(--tint-bg); }
+.history-actions { display: flex; gap: 8px; margin-top: 12px; }.history-actions > * { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; font-size: 12px; }.history-actions svg { width: 15px; height: 15px; }.destructive-text { color: #9d5365; }
