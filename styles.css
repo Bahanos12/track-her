@@ -213,3 +213,5 @@ button.exercise-row { width: 100%; border-width: 0 0 1px; border-style: solid; b
 .app-shell.has-resume-bar { padding-bottom: calc(170px + env(safe-area-inset-bottom)); }
 .discard-workout { display: block; margin: -12px auto 28px; color: #9d5365; }
 @media (min-width: 700px) { .resume-bar { bottom: 102px; } }
+.rest-banner { flex-wrap: wrap; }.rest-alert-ask { display: flex; flex: 1 0 100%; flex-wrap: wrap; align-items: center; gap: 7px; padding-top: 9px; border-top: 1px solid var(--tint-border); }.rest-alert-ask span { flex: 1 1 160px; color: var(--ink); font-size: 12px; line-height: 1.35; }.rest-alert-ask button { min-height: 36px; padding: 0 11px; border: 1px solid var(--tint-border); border-radius: 9px; background: white; color: var(--sage-dark); font-size: 12px; font-weight: 700; cursor: pointer; }.rest-alert-ask .allow { border-color: var(--sage-dark); background: var(--sage-dark); color: white; }
+.rest-alert-ask span { flex: 1 0 100%; }.rest-alert-ask button { flex: 1; }

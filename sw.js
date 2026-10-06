@@ -1,4 +1,4 @@
-const CACHE_NAME = "track-her-shell-v22";
+const CACHE_NAME = "track-her-shell-v24";
 const APP_SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon-maskable-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-48.png"];
 
 self.addEventListener("install", (event) => {
@@ -18,4 +18,12 @@ self.addEventListener("fetch", (event) => {
     if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put(cacheKey, response.clone()));
     return response;
   }).catch(async () => (await caches.match(cacheKey)) || (event.request.mode === "navigate" ? caches.match("./index.html") : Promise.reject(new Error("Offline asset unavailable.")))));
+});
+// Tapping a rest notification brings Honna back (or opens it).
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+    const open = clients.find((client) => client.url.startsWith(self.registration.scope));
+    return open ? open.focus() : self.clients.openWindow("./");
+  }));
 });

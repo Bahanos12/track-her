@@ -38,7 +38,7 @@ function applyTheme() {
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.colors[0]);
 }
 const defaultState = () => ({
-  version: 1, onboarded: false, name: "Sarah", units: "kg", weightStep: 2.5, theme: "plum", activeTab: "Home", activeWorkout: null, workoutPaused: false, todayWorkoutOverride: null,
+  version: 1, onboarded: false, name: "Sarah", units: "kg", weightStep: 2.5, theme: "plum", activeTab: "Home", activeWorkout: null, workoutPaused: false, todayWorkoutOverride: null, restAlerts: "", // "" = not asked, "on" | "off"
   sex: "", // "female" | "male" | "unspecified" ("" = not asked yet)
   // Optional cycle-aware training. "asked" records that the opt-in question was answered.
   menstrual: { asked: false, enabled: false, periodStarts: [], cycleLength: null, periodLength: 5, regularity: "unknown", contraception: "", checkins: [], dismissedInsights: {} },
@@ -687,7 +687,7 @@ function renderChart(records) {
 }
 function renderProfile() {
   const standalone = window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
-  return `<section class="page-intro profile-intro"><div class="profile-avatar">${escapeHtml((state.name || "H").slice(0, 1).toUpperCase())}</div><div class="profile-intro-text"><div class="eyebrow">Made for your pace</div><button class="profile-name" data-action="edit-name" aria-label="Edit your name"><h1>${escapeHtml(state.name || "Add your name")}</h1><span class="edit-hint" aria-hidden="true">${icon("edit")}</span></button><p>${escapeHtml(state.program.name)}</p></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>About you</strong><small>Shapes recommendations and features</small></div><select class="select-field" data-change="sex" aria-label="About you"><option value="" ${userSex() ? "" : "selected"} disabled>Choose</option>${sexOptions.map(([value, label]) => `<option value="${value}" ${userSex() === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div><div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section>${renderCycleSettings()}<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Honna</button>`}</section><p class="eyebrow" style="margin:22px 0;text-align:center">Honna · Your workouts, in rhythm</p>`;
+  return `<section class="page-intro profile-intro"><div class="profile-avatar">${escapeHtml((state.name || "H").slice(0, 1).toUpperCase())}</div><div class="profile-intro-text"><div class="eyebrow">Made for your pace</div><button class="profile-name" data-action="edit-name" aria-label="Edit your name"><h1>${escapeHtml(state.name || "Add your name")}</h1><span class="edit-hint" aria-hidden="true">${icon("edit")}</span></button><p>${escapeHtml(state.program.name)}</p></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>About you</strong><small>Shapes recommendations and features</small></div><select class="select-field" data-change="sex" aria-label="About you"><option value="" ${userSex() ? "" : "selected"} disabled>Choose</option>${sexOptions.map(([value, label]) => `<option value="${value}" ${userSex() === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div>${notificationsSupported() ? `<div class="setting-row"><div><strong>Rest timer alerts</strong><small>${state.restAlerts === "on" && Notification.permission !== "granted" ? "Blocked in browser settings" : "Notify when you leave the app during a rest"}</small></div><select class="select-field" data-change="rest-alerts" aria-label="Rest timer alerts"><option value="on" ${restAlertsOn() ? "selected" : ""}>On</option><option value="off" ${restAlertsOn() ? "" : "selected"}>Off</option></select></div>` : ""}<div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section>${renderCycleSettings()}<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Honna</button>`}</section><p class="eyebrow" style="margin:22px 0;text-align:center">Honna · Your workouts, in rhythm</p>`;
 }
 function renderOnboarding() {
   app.innerHTML = `<div class="onboarding"><div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual"><svg viewBox="0 0 220 190" fill="none" aria-hidden="true"><path d="M45 146c13-38 26-50 49-50 17 0 23 11 34 11 12 0 17-15 28-15 15 0 21 18 25 54" stroke="#60796c" stroke-width="14" stroke-linecap="round"/><path d="M73 81c-2-14 3-27 17-31 14-4 25 5 26 20 1 16-7 29-20 30-12 0-21-7-23-19Z" fill="#bd7f76"/><path d="M59 147h116" stroke="#40594d" stroke-width="8" stroke-linecap="round"/><circle cx="172" cy="48" r="16" fill="#dfb965"/><path d="m169 48 3 3 6-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="eyebrow">A little stronger, each time</div><h1>Welcome to Honna</h1><p class="onboarding-copy">Your workouts. Your progress. All in one place.</p></div><div><div class="step-dots"><i class="active"></i><i></i><i></i></div><div class="onboarding-actions"><button class="primary-button" data-action="onboarding-next">LET'S GET STARTED ${icon("arrow")}</button><button class="link-button" data-action="use-sample">Explore with a sample plan</button></div></div></div>`;
@@ -754,7 +754,7 @@ function counterMarkup(type, exerciseIndex, setIndex, value, unit, step) {
 }
 function renderRestTimer() {
   const remaining = Math.max(0, Math.ceil((state.activeWorkout.restEndsAt - Date.now()) / 1000));
-  return `<div class="rest-banner"><div><small>Take your time</small><strong>${String(Math.floor(remaining / 60)).padStart(2, "0")}:${String(remaining % 60).padStart(2, "0")} remaining</strong></div><div class="rest-actions"><button data-action="add-rest">+30 sec</button><button data-action="skip-rest">Skip</button></div></div>`;
+  return `<div class="rest-banner"><div><small>Take your time</small><strong>${String(Math.floor(remaining / 60)).padStart(2, "0")}:${String(remaining % 60).padStart(2, "0")} remaining</strong></div><div class="rest-actions"><button data-action="add-rest">+30 sec</button><button data-action="skip-rest">Skip</button></div>${shouldAskRestAlerts() ? `<div class="rest-alert-ask"><span>Get an alert when rest ends, even outside the app?</span><button data-action="rest-alerts-no">No thanks</button><button class="allow" data-action="rest-alerts-yes">Allow</button></div>` : ""}</div>`;
 }
 function beginRest(seconds) {
   if (!seconds) return;
@@ -762,12 +762,56 @@ function beginRest(seconds) {
   save(); render();
   runRestTicker();
 }
+// ---------- Rest alerts outside the app (notifications) ----------
+// Web apps can't show a live countdown in the status bar; they can post a notification with the end time
+// when you leave, and a "Rest is up" alert at the end (best effort: the phone may pause a backgrounded app).
+const restAlertTag = "honna-rest";
+let restAlertTimer = null;
+function notificationsSupported() { return "Notification" in window && "serviceWorker" in navigator; }
+function restAlertsOn() { return notificationsSupported() && state.restAlerts === "on" && Notification.permission === "granted"; }
+// Asked once, inside the rest bar (never a pop-up over the workout).
+function shouldAskRestAlerts() { return notificationsSupported() && !state.restAlerts && Notification.permission !== "denied"; }
+async function enableRestAlerts() {
+  if (!notificationsSupported()) return false;
+  const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+  state.restAlerts = permission === "granted" ? "on" : "off";
+  save();
+  if (permission !== "granted") toast("Notifications are blocked. You can allow them for this site in your browser settings.");
+  return permission === "granted";
+}
+function nextSetLabel() {
+  for (const exercise of state.activeWorkout?.exercises || []) {
+    const index = exercise.sets.findIndex((set) => !set.complete);
+    if (index >= 0) return `${exercise.name}, set ${index + 1}`;
+  }
+  return "";
+}
+async function showRestNotification(title, options) {
+  try { (await navigator.serviceWorker.ready).showNotification(title, { tag: restAlertTag, icon: "icons/icon-192.png", badge: "icons/favicon-48.png", ...options }); } catch { }
+}
+async function clearRestNotifications() {
+  clearTimeout(restAlertTimer); restAlertTimer = null;
+  try { for (const notification of await (await navigator.serviceWorker.ready).getNotifications({ tag: restAlertTag })) notification.close(); } catch { }
+}
+document.addEventListener("visibilitychange", () => {
+  const endsAt = state.activeWorkout?.restEndsAt;
+  if (document.visibilityState === "visible") { clearRestNotifications(); return; }
+  if (!restAlertsOn() || !endsAt || endsAt <= Date.now()) return;
+  const time = new Date(endsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  showRestNotification("Rest timer", { body: `Back at ${time} · ${state.activeWorkout.name}`, silent: true, timestamp: endsAt });
+  clearTimeout(restAlertTimer);
+  restAlertTimer = setTimeout(() => {
+    if (document.visibilityState === "visible" || state.activeWorkout?.restEndsAt !== endsAt) return;
+    const next = nextSetLabel();
+    showRestNotification("Rest is up", { body: next ? `Time for ${next}.` : "Time for your next set.", renotify: true, silent: false, vibrate: [220, 110, 220] });
+  }, endsAt - Date.now());
+});
 function runRestTicker() {
   clearInterval(restInterval);
   restInterval = window.setInterval(() => {
     if (!state.activeWorkout?.restEndsAt || Date.now() >= state.activeWorkout.restEndsAt) {
       clearInterval(restInterval); restInterval = null;
-      if (state.activeWorkout) { state.activeWorkout.restEndsAt = null; save(); render(); toast("Rest is up. You've got this."); }
+      if (state.activeWorkout) { state.activeWorkout.restEndsAt = null; save(); render(); toast("Rest is up. You've got this."); if (document.visibilityState === "visible") navigator.vibrate?.([180, 90, 180]); }
       return;
     }
     const banner = document.querySelector(".rest-banner strong");
@@ -1952,6 +1996,7 @@ function bindSelects() {
   app.querySelectorAll("[data-change]").forEach((select) => select.addEventListener("change", () => {
     if (select.dataset.change === "units") { state.units = select.value; if (state.units === "lbs" && Number(state.weightStep) === 2.5) state.weightStep = 5; else if (state.units === "kg" && Number(state.weightStep) === 5) state.weightStep = 2.5; }
     if (select.dataset.change === "weight-step") state.weightStep = Number(select.value);
+    if (select.dataset.change === "rest-alerts") { if (select.value === "on") { enableRestAlerts().then((on) => { if (on) toast("Rest alerts are on."); render(); }); return; } state.restAlerts = "off"; clearRestNotifications(); }
     if (select.dataset.change === "sex") { const wasOn = state.menstrual?.enabled; setSex(select.value); if (wasOn && !state.menstrual.enabled) toast("Cycle-aware training is off. Your logged data is kept."); }
     if (select.dataset.change === "progress-exercise") progressSelection = select.value;
     if (select.dataset.change === "repeat-weekly") state.program.repeatWeekly = select.value === "true";
@@ -2069,6 +2114,8 @@ document.addEventListener("click", (event) => {
   else if (action === "parse-pasted") parsePastedText();
   else if (action === "exit-workout") pauseWorkout();
   else if (action === "resume-workout") resumeWorkout();
+  else if (action === "rest-alerts-yes") enableRestAlerts().then((on) => { if (on) toast("Rest alerts are on."); render(); });
+  else if (action === "rest-alerts-no") { state.restAlerts = "off"; save(); render(); toast("Okay. You can turn rest alerts on in Profile."); }
   else if (action === "discard-workout") showSheet("Discard this workout?", "Everything you logged in this session will be lost. Your plan stays as it is.", "", `<button class="secondary-button" data-action="close-sheet">Keep it</button><button class="danger-button" data-action="confirm-discard-workout">DISCARD</button>`);
   else if (action === "confirm-discard-workout") discardWorkout();
   else if (action === "discard-and-start") { const start = { workoutId: button.dataset.workoutId, scheduledWorkoutId: button.dataset.scheduledWorkoutId }; discardWorkout(); beginStartFlow(start); }
