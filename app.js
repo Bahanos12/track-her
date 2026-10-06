@@ -143,8 +143,10 @@ function weekStartKey() {
   const start = weekStart();
   return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
 }
-function isWorkoutComplete(day) {
-  return state.history.some((workout) => {
+function isWorkoutComplete(day) { return Boolean(completionEntry(day)); }
+// The logged workout that counts this session as done right now (most recent first), if any.
+function completionEntry(day) {
+  return state.history.find((workout) => {
     const sameDay = workout.programDayId ? workout.programDayId === day.id : workout.name === day.name;
     if (!sameDay) return false;
       if (Number(state.program.cycleWeeks) > 1) return Number(workout.programWeek || 1) === Number(day.programWeek || 1) && (workout.cycleId ? workout.cycleId === state.program.cycleId : workout.date >= (state.program.cycleStartedAt || "0000-01-01"));
@@ -574,11 +576,11 @@ function renderHome() {
     : state.history.filter((item) => new Date(`${item.date}T12:00:00`).getTime() >= weekStart().getTime()).length;
   if (!workout && state.program.days.length) {
     const repeatMessage = state.program.repeatWeekly ? "Your weekly cycle starts again next week." : "This plan is complete. Turn on weekly repeat in Plan if you'd like to reuse it.";
-    return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderUndoFinishCard()}<div class="surface empty-state"><h3>${state.program.repeatWeekly ? "Your week is complete" : "Plan complete"}</h3><p>${repeatMessage}</p><button class="primary-button" data-tab="Plan">REVIEW MY PLAN</button></div>`;
+    return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderUndoFinishCard()}<div class="surface empty-state"><h3>${state.program.repeatWeekly ? "Your week is complete" : "Plan complete"}</h3><p>${repeatMessage}</p><div class="empty-actions"><button class="primary-button" data-tab="Plan">REVIEW MY PLAN</button>${state.history.length ? `<button class="link-button" data-action="reopen-session-picker">Reopen a session</button>` : ""}</div></div>`;
   }
   if (!workout) return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section><div class="surface empty-state"><h3>Your next chapter starts here</h3><p>Start with a recommended plan, create your own, or import the one you already follow.</p><div class="empty-actions"><button class="primary-button" data-action="use-recommended-plan">USE ${escapeHtml(recommendedPlan().name.toUpperCase())}</button><button class="secondary-button" data-action="create-program">Create my plan</button></div></div>`;
   const isToday = scheduledWorkout.day === todayDay();
-  const alternatives = Number(state.program.cycleWeeks) > 1 ? [true] : activeCycleDays().filter((day) => day.id !== scheduledWorkout.id && !isWorkoutComplete(day));
+  const alternatives = Number(state.program.cycleWeeks) > 1 ? [true] : activeCycleDays().filter((day) => day.id !== scheduledWorkout.id); // other sessions to swap to, or done ones to reopen
   return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderUndoFinishCard()}${renderCycleCard()}
     <div class="section-heading"><h2>${isToday ? "Today's workout" : "Up next"}</h2><button class="link-button" data-tab="Plan">View plan</button></div>
     <section class="today-card"><div class="today-top"><span class="eyebrow">${escapeHtml(scheduledWorkout.day)} · ${isToday ? "Today" : "Coming up"}${alternate ? " · Changed for today" : ""}</span><div class="today-card-actions"><span class="date-chip">${weekdayNames.includes(scheduledWorkout.day) ? prettyDate(keyFromDate(weekdayDate(scheduledWorkout.day)), { month: "short", day: "numeric" }) : "Any day"}</span>${alternatives.length ? `<button class="today-options-button" data-action="change-today-workout" data-scheduled-day-id="${scheduledWorkout.id}" aria-label="More workout options" title="More workout options">${icon("more")}</button>` : ""}</div></div><div class="today-title">${escapeHtml(workout.name)}</div><p class="today-meta">${workout.exercises.length} exercises <span aria-hidden="true">·</span> Approximately ${estimateDuration(workout)} min</p><div class="today-bottom"><div class="avatar-stack"><span class="tiny-dots"><i></i><i></i><i></i></span><span>${escapeHtml(state.program.name)}</span></div><button class="primary-button" data-action="start-workout" data-workout-id="${workout.id}" data-scheduled-workout-id="${scheduledWorkout.id}">START WORKOUT ${icon("arrow")}</button></div></section>
@@ -994,9 +996,11 @@ function showWorkoutDayPicker(scheduledDayId, week = Number(state.program.active
   const weekTabs = weeks.length > 1 ? `<div class="week-tabs" role="tablist" aria-label="Program week">${weeks.map((number) => `<button class="week-tab${number === week ? " selected" : ""}" data-action="picker-week" data-week="${number}" data-scheduled-day-id="${scheduledDayId}" role="tab" aria-selected="${number === week}">Week ${number}${number === activeWeek ? " ·&nbsp;now" : ""}</button>`).join("")}</div>` : "";
   const list = days.map((day) => {
     const selected = day.id === selectedId;
-    const done = isWorkoutComplete(day) && !selected;
-    const detail = [weekdayNames.includes(day.day) ? day.day : "", `${day.exercises.length} ${day.exercises.length === 1 ? "exercise" : "exercises"}`, day.id === scheduledDayId ? "Scheduled" : "", done ? "Done" : ""].filter(Boolean).join(" · ");
-    return `<button class="replacement-option${selected ? " selected" : ""}${done ? " done" : ""}" data-action="choose-today-workout" data-scheduled-day-id="${scheduledDayId}" data-workout-id="${day.id}"${selected ? ' aria-current="true"' : ""}${done ? " disabled" : ""}><span><strong>${escapeHtml(day.name)}</strong><small>${escapeHtml(detail)}</small></span>${icon(selected || done ? "check" : "arrow")}</button>`;
+    const done = isWorkoutComplete(day);
+    const detail = [weekdayNames.includes(day.day) ? day.day : "", `${day.exercises.length} ${day.exercises.length === 1 ? "exercise" : "exercises"}`, day.id === scheduledDayId ? "Scheduled" : "", done ? "Done · tap to reopen" : ""].filter(Boolean).join(" · ");
+    // Finished sessions can be reopened from here (same as Reopen in History).
+    if (done) return `<button class="replacement-option done" data-action="reopen-day" data-day-id="${day.id}"><span><strong>${escapeHtml(day.name)}</strong><small>${escapeHtml(detail)}</small></span>${icon("history")}</button>`;
+    return `<button class="replacement-option${selected ? " selected" : ""}" data-action="choose-today-workout" data-scheduled-day-id="${scheduledDayId}" data-workout-id="${day.id}"${selected ? ' aria-current="true"' : ""}><span><strong>${escapeHtml(day.name)}</strong><small>${escapeHtml(detail)}</small></span>${icon(selected ? "check" : "arrow")}</button>`;
   }).join("") || `<p class="replacement-empty">No sessions in this week.</p>`;
   const description = multiWeek ? "Pick a session in this week to swap today's workout, or pick another week to move your plan there." : "For today only. Your program stays as planned, and your scheduled session counts as complete when you finish.";
   showSheet("Pick today's session", description, `${weekTabs}<div class="replacement-options">${list}</div>`, `<button class="secondary-button" data-action="close-sheet">Close</button>`);
@@ -2008,6 +2012,13 @@ document.addEventListener("click", (event) => {
   else if (action === "complete-set") completeSet(Number(button.dataset.exerciseIndex), Number(button.dataset.setIndex));
   else if (action === "add-set") addSet(Number(button.dataset.exerciseIndex));
   else if (action === "reopen-workout") { if (button.closest(".undo-card")) reopenWorkout(button.dataset.historyId, true); else confirmReopen(button.dataset.historyId, button.dataset.resume === "1"); }
+  else if (action === "reopen-day") { const entry = completionEntry(state.program.days.find((day) => day.id === button.dataset.dayId) || {}); if (entry) confirmReopen(entry.id, true); }
+  else if (action === "reopen-session-picker") {
+    const multiWeek = Number(state.program.cycleWeeks) > 1;
+    const week = multiWeek ? Math.min(Number(state.program.activeCycleWeek) || 1, Number(state.program.cycleWeeks)) : 1;
+    const first = (multiWeek ? state.program.days.filter((day) => (Number(day.programWeek) || 1) === week) : activeCycleDays())[0];
+    if (first) showWorkoutDayPicker(first.id, week);
+  }
   else if (action === "confirm-reopen") reopenWorkout(button.dataset.historyId, button.dataset.resume === "1");
   else if (action === "add-active-exercise") showAddActiveExercise();
   else if (action === "save-active-exercise") saveActiveExercise();
