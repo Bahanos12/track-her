@@ -664,7 +664,7 @@ function renderWellbeingCard() {
   if (wellbeingComplete(log) && !wellbeingEditing) {
     const suggestion = readinessOn() ? readinessSuggestion() : null;
     const tip = suggestion ? todaysAdvice(suggestion)[0] : null;
-    const advice = suggestion ? `<div class="wb-advice wb-advice-${suggestion.level}"><strong>${suggestionCopy[suggestion.level]}</strong>${tip ? `<p class="wb-tip">${escapeHtml(tip.text)} <button class="link-button" data-action="research-library">Sources</button></p>` : ""}</div>` : "";
+    const advice = suggestion ? `<div class="wb-advice wb-advice-${suggestion.level}"><strong>${suggestionHeadline(suggestion)}</strong>${tip ? `<p class="wb-tip">${escapeHtml(tip.text)} <button class="link-button" data-action="research-library">Sources</button></p>` : ""}</div>` : "";
     return `<section class="cycle-card wb-card wb-done"><div class="wb-head"><strong>Today's check-in</strong><button class="link-button" data-action="wb-edit">Edit</button></div>${wellbeingChips(log)}${advice}</section>`;
   }
   if (skippedToday && !wellbeingEditing) return "";
@@ -727,7 +727,7 @@ const researchLibrary = [
   { topic: "Recovery", title: "Life stress slows recovery", text: "People under high ongoing stress recovered strength and energy more slowly over the 4 days after hard training. In stressful weeks, leave more time before training the same muscles hard again.", source: "stults2014" },
   { topic: "Cycle", title: "Your period isn't a reason to train less by default", text: "On average, performance may be only trivially lower in the early follicular phase (the period), and results vary a lot between studies. Adjust based on how you feel; Honna learns your own pattern.", source: "mcnulty2020" },
   { topic: "Cycle", title: "Phase-based plans aren't backed by good evidence", text: "Reviews found no high-quality evidence that strength or muscle gains differ by cycle phase, so rigid \"train by phase\" plans are premature. Personal tracking is the better guide.", source: "colenso2023" },
-  { topic: "Cycle", title: "Exercise can ease period pain", text: "Regular exercise (about 3 times a week, 45–60 minutes in most trials) reduced period pain in a Cochrane review, with no extra side effects. A session on a crampy day is usually fine.", source: "armour2019" },
+  { topic: "Cycle", title: "Exercise can ease period pain", text: "Regular exercise (about 3 times a week, 45–60 minutes in most trials) reduced period pain over several weeks in a Cochrane review, with no extra side effects. The evidence is low quality, and it doesn't show that training on a painful day helps that day: light movement and rest are both fine.", source: "armour2019" },
   { topic: "Cycle", title: "The pill has at most a trivial effect", text: "Pill users performed only trivially lower than naturally cycling women on average, and performance was steady across the pill cycle, including the break week.", source: "elliottsale2020" },
   { topic: "Cycle", title: "Heavy periods and iron", text: "Heavy periods were reported by over a third of women who train, including elite athletes, and were linked to anaemia. If heavy periods leave you drained, ask a doctor to check your ferritin.", source: "bruinvels2016" },
 ];
@@ -738,22 +738,38 @@ function todaysAdvice(suggestion = readinessSuggestion()) {
   const log = wellbeingOn() ? todaysWellbeing() : null;
   const sleep = Number(log?.sleep), stress = Number(log?.stress), energy = Number(log?.energy);
   const symptoms = log?.symptoms || [];
-  if (sleep && sleep <= 2) add("After poor sleep, performance drops by about 7–8% on average, more the longer you've been awake. Keep your main lifts, leave 2–3 reps in reserve, skip max attempts, and train earlier in the day if you can.", "craven2022");
-  if (stress >= 4) add("High stress slows recovery after hard sessions. Train as planned if you feel fine, but stop 1–2 reps short of failure and leave at least 2 days before hitting the same muscles hard again.", "stults2014");
-  if (energy && energy <= 2 && !(sleep && sleep <= 2)) add("On a low-energy day, let effort set the weight: choose a load you could lift for 2–3 more reps. Stopping short of failure still builds nearly as much muscle.", "refalo2023");
   const info = cycleTrackingOn() ? cycleInfo() : null;
   const flow = cycleTrackingOn() ? menstrual().periodDays?.[todayKey()] || "" : "";
   const inPeriod = Boolean(info) && (info.bucket.startsWith("period") || (flow && flow !== "spotting"));
   const onPill = menstrual().contraception === "pill";
-  if (symptoms.includes("Cramps")) add("Moving usually helps cramps: regular exercise reduced period pain in a Cochrane review. Lighter warm-up sets and a little extra rest are fine.", "armour2019");
-  if (suggestion.pattern) add(`This suggestion comes from your own logs over ${suggestion.pattern.cycles} cycles. Responses to the cycle vary a lot between people, so your own pattern is the best guide.`, "colenso2023");
-  else if (inPeriod) add(onPill ? "On the pill, performance is steady across the pill cycle, including the break week. No need to change your plan." : "On average your period has at most a trivial effect on strength, so there's no need to train lighter by default. Adjust only if you feel worse.", onPill ? "elliottsale2020" : "mcnulty2020");
+  // Period pain and heavy flow come first: they're the most specific to today.
+  if (symptoms.includes("Cramps")) add("Regular exercise over weeks can reduce period pain over time. Today, light movement is fine if it feels good, and resting is fine too.", "armour2019");
   if (flow === "heavy" && ((energy && energy <= 2) || symptoms.includes("Fatigue") || symptoms.includes("Low energy"))) add("Heavy periods are common in women who train and are linked to low iron. If heavy periods often leave you drained, ask a doctor to check your ferritin.", "bruinvels2016");
+  if (sleep && sleep <= 2) add("After poor sleep, performance drops by about 7–8% on average, more the longer you've been awake. Keep your main lifts, leave 2–3 reps in reserve, skip max attempts, and train earlier in the day if you can.", "craven2022");
+  if (stress >= 4) add("High stress slows recovery after hard sessions. Train as planned if you feel fine, but stop 1–2 reps short of failure and leave at least 2 days before hitting the same muscles hard again.", "stults2014");
+  if (energy && energy <= 2 && !(sleep && sleep <= 2)) add("On a low-energy day, let effort set the weight: choose a load you could lift for 2–3 more reps. Stopping short of failure still builds nearly as much muscle.", "refalo2023");
+  if (suggestion.pattern) add(`This suggestion comes from your own logs over ${suggestion.pattern.cycles} cycles. Responses to the cycle vary a lot between people, so your own pattern is the best guide.`, "colenso2023");
+  else if (inPeriod && !symptoms.includes("Cramps")) add(onPill ? "On the pill, performance is steady across the pill cycle, including the break week. No need to change your plan." : "On average your period has at most a trivial effect on strength, so there's no need to train lighter by default. Adjust only if you feel worse.", onPill ? "elliottsale2020" : "mcnulty2020");
   return advice;
 }
 const sourceLink = (key) => { const source = researchSources[key]; return source ? `<a class="source-link" href="${source.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.cite)}</a>` : ""; };
 function renderAdviceList(advice) {
   return advice.length ? `<ul class="advice-list">${advice.map((item) => `<li><span>${escapeHtml(item.text)}</span>${sourceLink(item.source)}</li>`).join("")}</ul>` : "";
+}
+// Heavy flow or period pain today: resting is offered as a real option.
+function restDayOffered() {
+  const flow = cycleTrackingOn() ? menstrual().periodDays?.[todayKey()] || "" : "";
+  const symptoms = wellbeingOn() ? todaysWellbeing()?.symptoms || [] : [];
+  return flow === "heavy" || symptoms.includes("Cramps");
+}
+function suggestionHeadline(suggestion) {
+  return suggestion.level === "keep" && restDayOffered() ? "Train if you feel up to it, or rest today." : suggestionCopy[suggestion.level];
+}
+function restToday() {
+  pendingWorkoutStart = null;
+  document.querySelector(".overlay")?.remove();
+  render();
+  toast("Rest well. Today's workout stays in your plan.");
 }
 // One tip per day, cycling through the library in order (the same tip all day, a new one tomorrow).
 function tipOfTheDayOn() { return state.tipOfDay !== false; }
@@ -782,11 +798,13 @@ function showPreWorkoutCheckIn(start) {
 function showReadinessSuggestion(start) {
   pendingWorkoutStart = start;
   const suggestion = readinessSuggestion();
-  if (suggestion.level === "keep" || state.readinessDeclined === todayKey()) { beginCheckedWorkout("normal", suggestion); return; }
+  const offerRest = restDayOffered();
+  if ((suggestion.level === "keep" && !offerRest) || state.readinessDeclined === todayKey()) { beginCheckedWorkout("normal", suggestion); return; }
   const why = suggestion.reasons.length ? `Based on ${suggestion.reasons.join("; ")}.` : "";
   const option = (choice, title, detail) => `<button class="readiness-option${choice === suggestion.level ? " selected" : ""}" data-action="adapt-choice" data-choice="${choice === "keep" ? "normal" : choice}"><span><strong>${title}${choice === suggestion.level ? " · suggested" : ""}</strong><small>${detail}</small></span></button>`;
   const advice = todaysAdvice(suggestion);
-  showSheet("A gentle suggestion", `${suggestionCopy[suggestion.level]} ${why} You decide.`, `<div class="readiness-options">${option("keep", "Keep my planned workout", "Nothing changes")}${option("adapted", "Reduce intensity", "One set fewer per exercise, same weights, leave 2–3 reps in reserve")}${option("light", "Lighter session", "About half the sets, ~10% lighter, longer rest")}</div>${advice.length ? `<div class="preview-block"><div class="field-label">What the research says</div>${renderAdviceList(advice)}</div>` : ""}`, `<button class="secondary-button" data-action="close-sheet">Cancel</button>`);
+  const restOption = offerRest ? `<button class="readiness-option" data-action="adapt-choice" data-choice="rest"><span><strong>Rest today</strong><small>Skip today, or take a gentle walk. Your plan waits for you.</small></span></button>` : "";
+  showSheet("A gentle suggestion", `${suggestionHeadline(suggestion)} ${why} You decide.`, `<div class="readiness-options">${option("keep", "Keep my planned workout", "Nothing changes")}${option("adapted", "Reduce intensity", "One set fewer per exercise, same weights, leave 2–3 reps in reserve")}${option("light", "Lighter session", "About half the sets, ~10% lighter, longer rest")}${restOption}</div>${advice.length ? `<div class="preview-block"><div class="field-label">What the research says</div>${renderAdviceList(advice)}</div>` : ""}`, `<button class="secondary-button" data-action="close-sheet">Cancel</button>`);
 }
 function beginStartFlowChecks(start) {
   if (!readinessOn()) { launchWorkout(start.workoutId, start.scheduledWorkoutId); return; }
@@ -2501,7 +2519,7 @@ document.addEventListener("click", (event) => {
   else if (action === "wb-skip") { wellbeing().skipped = todayKey(); wellbeingEditing = false; save(); render(); }
   else if (action === "prestart-skip" && pendingWorkoutStart) { wellbeing().skipped = todayKey(); save(); showReadinessSuggestion(pendingWorkoutStart); }
   else if (action === "prestart-continue" && pendingWorkoutStart) showReadinessSuggestion(pendingWorkoutStart);
-  else if (action === "adapt-choice") beginCheckedWorkout(button.dataset.choice);
+  else if (action === "adapt-choice") { if (button.dataset.choice === "rest") restToday(); else beginCheckedWorkout(button.dataset.choice); }
   else if (action === "cycle-onboarding-yes") { finishOnboarding(); showCycleSetup(); }
   else if (action === "cycle-onboarding-no") { menstrual().asked = true; finishOnboarding(); }
   else if (action === "change-today-workout") showWorkoutDayPicker(button.dataset.scheduledDayId);
