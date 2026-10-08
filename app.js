@@ -699,7 +699,7 @@ function readinessSuggestion() {
   const pattern = cycleTrackingOn() ? todaysCycleSuggestion() : null;
   if (pattern) { score += 2; reasons.push(pattern.text.replace(/\.$/, "").replace(/^You /, "you ").replace(/^Your /, "your ")); }
   // Heavy flow or period pain: no option is suggested, the person decides (rest is offered too).
-  if (restDayOffered()) return { level: "none", score, reasons, pattern };
+  if (painOrHeavyDay()) return { level: "none", score, reasons, pattern };
   const level = score >= 4 ? "light" : score >= 2 ? "adapted" : "keep";
   return { level, score, reasons, pattern };
 }
@@ -758,13 +758,21 @@ const sourceLink = (key) => { const source = researchSources[key]; return source
 function renderAdviceList(advice) {
   return advice.length ? `<ul class="advice-list">${advice.map((item) => `<li><span>${escapeHtml(item.text)}</span>${sourceLink(item.source)}</li>`).join("")}</ul>` : "";
 }
-// Heavy flow or period pain today: resting is offered as a real option.
-function restDayOffered() {
+// Heavy flow or period pain today: no option is suggested, the person decides.
+function painOrHeavyDay() {
   const flow = cycleTrackingOn() ? menstrual().periodDays?.[todayKey()] || "" : "";
   const symptoms = wellbeingOn() ? todaysWellbeing()?.symptoms || [] : [];
   return flow === "heavy" || symptoms.includes("Cramps");
 }
-function suggestionHeadline(suggestion) { return suggestionCopy[suggestion.level]; }
+// Any period day (logged flow of any kind, or a period day in the cycle) or period pain: "Rest today" is offered.
+function restDayOffered() {
+  if (painOrHeavyDay()) return true;
+  if (!cycleTrackingOn()) return false;
+  return Boolean(menstrual().periodDays?.[todayKey()]) || Boolean(cycleInfo()?.bucket.startsWith("period"));
+}
+function suggestionHeadline(suggestion) {
+  return suggestion.level === "keep" && restDayOffered() ? "On your period today. Train as planned, or rest if you'd rather." : suggestionCopy[suggestion.level];
+}
 function restToday() {
   pendingWorkoutStart = null;
   document.querySelector(".overlay")?.remove();
@@ -799,7 +807,7 @@ function showReadinessSuggestion(start) {
   pendingWorkoutStart = start;
   const suggestion = readinessSuggestion();
   const offerRest = restDayOffered();
-  if (suggestion.level === "keep" || state.readinessDeclined === todayKey()) { beginCheckedWorkout("normal", suggestion); return; }
+  if ((suggestion.level === "keep" && !offerRest) || state.readinessDeclined === todayKey()) { beginCheckedWorkout("normal", suggestion); return; }
   const why = suggestion.reasons.length ? `Based on ${suggestion.reasons.join("; ")}.` : "";
   const option = (choice, title, detail) => `<button class="readiness-option${choice === suggestion.level ? " selected" : ""}" data-action="adapt-choice" data-choice="${choice === "keep" ? "normal" : choice}"><span><strong>${title}${choice === suggestion.level ? " · suggested" : ""}</strong><small>${detail}</small></span></button>`;
   const advice = todaysAdvice(suggestion);
