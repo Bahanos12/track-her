@@ -477,7 +477,8 @@ function renderCycleSettings() {
   const wellbeingRow = `<div class="setting-row"><div><strong>Wellbeing tracking</strong><small>${wellbeingOn() ? `Mood, energy, stress, sleep & symptoms · ${logged} ${logged === 1 ? "day" : "days"} logged` : "Quick daily mood, energy, stress, sleep & symptoms"}</small></div>${select("toggle-wellbeing", wellbeingOn(), "Wellbeing tracking")}</div>`;
   const readinessRow = `<div class="setting-row"><div><strong>Training readiness suggestions</strong><small>Gentle suggestions from your ${[wellbeingOn() ? "wellbeing" : "", cycleTrackingOn() ? "cycle" : ""].filter(Boolean).join(" & ") || "wellbeing & cycle"} data. Never automatic.</small></div>${select("toggle-readiness", readinessOn(), "Training readiness suggestions")}</div>`;
   const details = cycleTrackingOn() ? `<div class="setting-row"><div><strong>My cycle & what Honna learned</strong><small>${dailySignals().length} days of check-ins · ${sortedPeriodStarts().length} periods logged</small></div><button class="link-button" data-action="cycle-details">View ${icon("arrow")}</button></div>` : "";
-  return `<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Wellbeing & training</div>${cycleRow}${wellbeingRow}${readinessRow}${details}</section>`;
+  const research = `<div class="setting-row"><div><strong>What the research says</strong><small>Evidence-based training tips with sources</small></div><button class="link-button" data-action="research-library">Read ${icon("arrow")}</button></div>`;
+  return `<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Wellbeing & training</div>${cycleRow}${wellbeingRow}${readinessRow}${details}${research}</section>`;
 }
 function showCycleSetup() {
   const data = menstrual();
@@ -588,8 +589,9 @@ function showCycleView(month = null) {
   const insights = cycleInsights();
   const learned = insights.length ? `<ul class="insight-list">${insights.map((insight) => `<li>${escapeHtml(insight.text)} <small>(${insight.cycles} cycles)</small></li>`).join("")}</ul>` : `<p class="muted-copy">Nothing yet. Honna looks for patterns that repeat in at least two cycles, using how you felt (wellbeing check-ins) and the weights and reps you log.</p>`;
   const summary = info ? `${renderCycleRing(info, 92)}<div><strong>${info.bucket.startsWith("period") ? `Period · day ${info.day}` : info.day > info.length ? "Period may be late" : `Period in ${info.daysUntilPeriod} ${info.daysUntilPeriod === 1 ? "day" : "days"}`}</strong><small>${hormonalContraception() || info.bucket.startsWith("period") ? `Day ${info.day} of about ${info.length}` : `${info.inFertile ? "Fertile window (estimate)" : info.phase} · day ${info.day} of about ${info.length}`}</small><small>Next period ≈ ${prettyDate(info.nextPeriod, { month: "long", day: "numeric" })}</small></div>` : `<div><strong>No period logged yet</strong><small>Tap a day in the calendar to log it.</small></div>`;
+  const trainingToday = renderAdviceList(todaysAdvice());
   const note = hormonalContraception() ? "With hormonal contraception, fertile days and ovulation aren't shown." : "Fertile window and ovulation are estimates from your cycle dates. Not for contraception or fertility planning.";
-  showSheet("Your cycle", "", `<div class="cycle-view-top">${summary}</div>${quick}${renderCycleCalendar(cycleViewMonth)}<p class="muted-copy">${note}</p><div class="preview-block"><div class="field-label">Your cycle stats</div>${statsBlock}</div>${history ? `<div class="preview-block"><div class="field-label">Cycle history</div><ul class="cycle-history">${history}</ul></div>` : ""}<div class="preview-block"><div class="field-label">What Honna has learned</div>${learned}</div>`, `<button class="secondary-button" data-action="cycle-setup">Settings</button><button class="primary-button" data-action="close-sheet">DONE</button>`);
+  showSheet("Your cycle", "", `<div class="cycle-view-top">${summary}</div>${quick}${renderCycleCalendar(cycleViewMonth)}<p class="muted-copy">${note}</p><div class="preview-block"><div class="field-label">Your cycle stats</div>${statsBlock}</div>${history ? `<div class="preview-block"><div class="field-label">Cycle history</div><ul class="cycle-history">${history}</ul></div>` : ""}<div class="preview-block"><div class="field-label">What Honna has learned</div>${learned}</div>${trainingToday ? `<div class="preview-block"><div class="field-label">Training today</div>${trainingToday}</div>` : ""}`, `<button class="secondary-button" data-action="cycle-setup">Settings</button><button class="primary-button" data-action="close-sheet">DONE</button>`);
 }
 function showPeriodDayLog(date) {
   const flow = menstrual().periodDays?.[date] || "";
@@ -651,7 +653,8 @@ function renderWellbeingCard() {
   const skippedToday = wellbeing().skipped === todayKey();
   if (wellbeingComplete(log) && !wellbeingEditing) {
     const suggestion = readinessOn() ? readinessSuggestion() : null;
-    return `<section class="cycle-card wb-card wb-done"><div><strong>Today's check-in</strong><small>${escapeHtml(wellbeingSummary(log))}</small>${suggestion ? `<small class="wb-suggestion">${suggestionCopy[suggestion.level]}</small>` : ""}</div><button class="secondary-button cycle-log" data-action="wb-edit">Edit</button></section>`;
+    const tip = suggestion ? todaysAdvice(suggestion)[0] : null;
+    return `<section class="cycle-card wb-card wb-done"><div><strong>Today's check-in</strong><small>${escapeHtml(wellbeingSummary(log))}</small>${suggestion ? `<small class="wb-suggestion">${suggestionCopy[suggestion.level]}</small>` : ""}${tip ? `<small class="wb-tip">${escapeHtml(tip.text)} <button class="link-button" data-action="research-library">Sources</button></small>` : ""}</div><button class="secondary-button cycle-log" data-action="wb-edit">Edit</button></section>`;
   }
   if (skippedToday && !wellbeingEditing) return "";
   return `<section class="cycle-card wb-card"><div class="wb-head"><strong>How are you today?</strong><button class="link-button" data-action="wb-skip">Not today</button></div>${renderWellbeingForm(log, "card")}</section>`;
@@ -687,6 +690,65 @@ function readinessSuggestion() {
   const level = score >= 4 ? "light" : score >= 2 ? "adapted" : "keep";
   return { level, score, reasons, pattern };
 }
+// ---------- Evidence-based training advice ----------
+// Each tip comes from a peer-reviewed review or study. Advice is shown with its source; it never changes a workout by itself.
+const researchSources = {
+  craven2022: { cite: "Craven et al. 2022 · Sports Medicine (meta-analysis, 69 studies)", url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9584849/" },
+  stults2014: { cite: "Stults-Kolehmainen et al. 2014 · J Strength Cond Res", url: "https://pubmed.ncbi.nlm.nih.gov/24343323/" },
+  refalo2023: { cite: "Refalo et al. 2023 · Sports Medicine (meta-analysis)", url: "https://doi.org/10.1007/s40279-022-01784-y" },
+  robinson2024: { cite: "Robinson et al. 2024 · Sports Medicine (meta-regressions)", url: "https://doi.org/10.1007/s40279-024-02069-2" },
+  helms2016: { cite: "Helms et al. 2016 · Strength Cond J", url: "https://openrepository.aut.ac.nz/items/efef3b25-6701-4fb5-bb82-55fcd2a26027/full" },
+  schoenfeld2017: { cite: "Schoenfeld et al. 2017 · J Sports Sci (meta-analysis)", url: "https://doi.org/10.1080/02640414.2016.1210197" },
+  bell2023: { cite: "Bell et al. 2023 · Sports Medicine – Open (expert consensus)", url: "https://shura.shu.ac.uk/32417/" },
+  mcnulty2020: { cite: "McNulty et al. 2020 · Sports Medicine (meta-analysis, 78 studies)", url: "https://nrl.northumbria.ac.uk/id/eprint/43759" },
+  colenso2023: { cite: "Colenso-Semple et al. 2023 · Front Sports Act Living (umbrella review)", url: "https://www.frontiersin.org/articles/10.3389/fspor.2023.1054542" },
+  elliottsale2020: { cite: "Elliott-Sale et al. 2020 · Sports Medicine (meta-analysis)", url: "https://nrl.northumbria.ac.uk/id/eprint/43772" },
+  armour2019: { cite: "Armour et al. 2019 · Cochrane review (12 trials)", url: "https://www.cochrane.org/CD004142" },
+  bruinvels2016: { cite: "Bruinvels et al. 2016 · PLoS ONE", url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC4763330/" },
+};
+const researchLibrary = [
+  { topic: "Effort", title: "You don't need to train to failure", text: "Stopping 1–3 reps short of failure builds about as much muscle as going all the way, with less fatigue. Save true failure for the last set of small isolation exercises, if at all.", source: "refalo2023" },
+  { topic: "Effort", title: "Close to failure for muscle, heavier loads for strength", text: "Muscle growth improves as sets end closer to failure (0–3 reps left). Strength depends more on lifting heavy loads than on how close to failure you go.", source: "robinson2024" },
+  { topic: "Effort", title: "Rate your sets by reps in reserve", text: "After a set, ask: how many more good reps could I have done? \"2 left\" is a reliable guide, and it lets you adjust weights on good and bad days instead of forcing the plan.", source: "helms2016" },
+  { topic: "Volume", title: "Aim for about 10+ hard sets per muscle per week", text: "Muscle growth rose with weekly sets: 10 or more sets per muscle per week beat 5–9, which beat fewer than 5. Start near 10 and add sets only if you recover well.", source: "schoenfeld2017" },
+  { topic: "Recovery", title: "Plan a lighter week now and then", text: "Coaches agree on deloads: a short period (often about a week) of fewer sets and/or lighter weights every 4–8 weeks of hard training, or when fatigue builds up.", source: "bell2023" },
+  { topic: "Recovery", title: "Sleep is part of training", text: "One short night lowered performance by about 7–8% on average, more with each extra hour awake before training. After a bad night, train earlier if you can, keep 2–3 reps in reserve and skip max attempts.", source: "craven2022" },
+  { topic: "Recovery", title: "Life stress slows recovery", text: "People under high ongoing stress recovered strength and energy more slowly over the 4 days after hard training. In stressful weeks, leave more time before training the same muscles hard again.", source: "stults2014" },
+  { topic: "Cycle", title: "Your period isn't a reason to train less by default", text: "On average, performance may be only trivially lower in the early follicular phase (the period), and results vary a lot between studies. Adjust based on how you feel; Honna learns your own pattern.", source: "mcnulty2020" },
+  { topic: "Cycle", title: "Phase-based plans aren't backed by good evidence", text: "Reviews found no high-quality evidence that strength or muscle gains differ by cycle phase, so rigid \"train by phase\" plans are premature. Personal tracking is the better guide.", source: "colenso2023" },
+  { topic: "Cycle", title: "Exercise can ease period pain", text: "Regular exercise (about 3 times a week, 45–60 minutes in most trials) reduced period pain in a Cochrane review, with no extra side effects. A session on a crampy day is usually fine.", source: "armour2019" },
+  { topic: "Cycle", title: "The pill has at most a trivial effect", text: "Pill users performed only trivially lower than naturally cycling women on average, and performance was steady across the pill cycle, including the break week.", source: "elliottsale2020" },
+  { topic: "Cycle", title: "Heavy periods and iron", text: "Heavy periods were reported by over a third of women who train, including elite athletes, and were linked to anaemia. If heavy periods leave you drained, ask a doctor to check your ferritin.", source: "bruinvels2016" },
+];
+// Concrete, sourced advice for today, from today's check-in and cycle day.
+function todaysAdvice(suggestion = readinessSuggestion()) {
+  const advice = [];
+  const add = (text, source) => advice.push({ text, source });
+  const log = wellbeingOn() ? todaysWellbeing() : null;
+  const sleep = Number(log?.sleep), stress = Number(log?.stress), energy = Number(log?.energy);
+  const symptoms = log?.symptoms || [];
+  if (sleep && sleep <= 2) add("After poor sleep, performance drops by about 7–8% on average, more the longer you've been awake. Keep your main lifts, leave 2–3 reps in reserve, skip max attempts, and train earlier in the day if you can.", "craven2022");
+  if (stress >= 4) add("High stress slows recovery after hard sessions. Train as planned if you feel fine, but stop 1–2 reps short of failure and leave at least 2 days before hitting the same muscles hard again.", "stults2014");
+  if (energy && energy <= 2 && !(sleep && sleep <= 2)) add("On a low-energy day, let effort set the weight: choose a load you could lift for 2–3 more reps. Stopping short of failure still builds nearly as much muscle.", "refalo2023");
+  const info = cycleTrackingOn() ? cycleInfo() : null;
+  const flow = cycleTrackingOn() ? menstrual().periodDays?.[todayKey()] || "" : "";
+  const inPeriod = Boolean(info) && (info.bucket.startsWith("period") || (flow && flow !== "spotting"));
+  const onPill = menstrual().contraception === "pill";
+  if (symptoms.includes("Cramps")) add("Moving usually helps cramps: regular exercise reduced period pain in a Cochrane review. Lighter warm-up sets and a little extra rest are fine.", "armour2019");
+  if (suggestion.pattern) add(`This suggestion comes from your own logs over ${suggestion.pattern.cycles} cycles. Responses to the cycle vary a lot between people, so your own pattern is the best guide.`, "colenso2023");
+  else if (inPeriod) add(onPill ? "On the pill, performance is steady across the pill cycle, including the break week. No need to change your plan." : "On average your period has at most a trivial effect on strength, so there's no need to train lighter by default. Adjust only if you feel worse.", onPill ? "elliottsale2020" : "mcnulty2020");
+  if (flow === "heavy" && ((energy && energy <= 2) || symptoms.includes("Fatigue") || symptoms.includes("Low energy"))) add("Heavy periods are common in women who train and are linked to low iron. If heavy periods often leave you drained, ask a doctor to check your ferritin.", "bruinvels2016");
+  return advice;
+}
+const sourceLink = (key) => { const source = researchSources[key]; return source ? `<a class="source-link" href="${source.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.cite)}</a>` : ""; };
+function renderAdviceList(advice) {
+  return advice.length ? `<ul class="advice-list">${advice.map((item) => `<li><span>${escapeHtml(item.text)}</span>${sourceLink(item.source)}</li>`).join("")}</ul>` : "";
+}
+function showResearchLibrary() {
+  const topics = [...new Set(researchLibrary.map((tip) => tip.topic))].filter((topic) => topic !== "Cycle" || cycleAvailable());
+  const body = topics.map((topic) => `<div class="preview-block"><div class="field-label">${topic}</div><ul class="advice-list">${researchLibrary.filter((tip) => tip.topic === topic).map((tip) => `<li><strong>${escapeHtml(tip.title)}</strong><span>${escapeHtml(tip.text)}</span>${sourceLink(tip.source)}</li>`).join("")}</ul></div>`).join("");
+  showSheet("What the research says", "Short, practical takeaways from peer-reviewed reviews and studies. General guidance, not medical advice.", body, `<button class="primary-button" data-action="close-sheet">DONE</button>`);
+}
 // Before a workout: optional quick check-in (if wellbeing is on and today isn't logged), then a suggestion (if readiness is on).
 let pendingWorkoutStart = null;
 function showPreWorkoutCheckIn(start) {
@@ -699,7 +761,8 @@ function showReadinessSuggestion(start) {
   if (suggestion.level === "keep" || state.readinessDeclined === todayKey()) { beginCheckedWorkout("normal", suggestion); return; }
   const why = suggestion.reasons.length ? `Based on ${suggestion.reasons.join("; ")}.` : "";
   const option = (choice, title, detail) => `<button class="readiness-option${choice === suggestion.level ? " selected" : ""}" data-action="adapt-choice" data-choice="${choice === "keep" ? "normal" : choice}"><span><strong>${title}${choice === suggestion.level ? " · suggested" : ""}</strong><small>${detail}</small></span></button>`;
-  showSheet("A gentle suggestion", `${suggestionCopy[suggestion.level]} ${why} You decide.`, `<div class="readiness-options">${option("keep", "Keep my planned workout", "Nothing changes")}${option("adapted", "Reduce intensity", "One set fewer per exercise, same weights, stop 1–2 reps short of failure")}${option("light", "Lighter session", "About half the sets, ~10% lighter, longer rest")}</div>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button>`);
+  const advice = todaysAdvice(suggestion);
+  showSheet("A gentle suggestion", `${suggestionCopy[suggestion.level]} ${why} You decide.`, `<div class="readiness-options">${option("keep", "Keep my planned workout", "Nothing changes")}${option("adapted", "Reduce intensity", "One set fewer per exercise, same weights, leave 2–3 reps in reserve")}${option("light", "Lighter session", "About half the sets, ~10% lighter, longer rest")}</div>${advice.length ? `<div class="preview-block"><div class="field-label">What the research says</div>${renderAdviceList(advice)}</div>` : ""}`, `<button class="secondary-button" data-action="close-sheet">Cancel</button>`);
 }
 function beginStartFlowChecks(start) {
   if (!readinessOn()) { launchWorkout(start.workoutId, start.scheduledWorkoutId); return; }
@@ -718,7 +781,7 @@ function applyAdaptation(choice) {
       exercise.sets.forEach((set) => { if (Number(set.weight) > 0) set.weight = Math.max(0, Math.round(Number(set.weight) * 0.9 / step) * step); });
       exercise.rest = Math.round((Number(exercise.rest) || 60) * 1.3);
     }
-    exercise.notes = [choice === "light" ? "Lighter session today" : "Adapted today: aim ~1–2 reps further from failure", exercise.notes].filter(Boolean).join(" · ");
+    exercise.notes = [choice === "light" ? "Lighter session today" : "Adapted today: leave 2–3 reps in reserve", exercise.notes].filter(Boolean).join(" · ");
   }
 }
 function beginCheckedWorkout(choice, suggestion = readinessSuggestion()) {
@@ -2397,6 +2460,7 @@ document.addEventListener("click", (event) => {
   else if (action === "cycle-day") showPeriodDayLog(button.dataset.date);
   else if (action === "set-flow") { setPeriodDay(button.dataset.date, button.dataset.flow); save(); render(); showCycleView(); toast(button.dataset.flow ? `${flowOptions.find(([value]) => value === button.dataset.flow)[1]} logged for ${prettyDate(button.dataset.date)}.` : `Cleared ${prettyDate(button.dataset.date)}.`); }
   else if (action === "cycle-details") showCycleView();
+  else if (action === "research-library") showResearchLibrary();
   else if (action === "wb-set") { setWellbeingValue(button.dataset.field, Number(button.dataset.value)); save(); if (button.dataset.context === "sheet") showPreWorkoutCheckIn(pendingWorkoutStart); else render(); }
   else if (action === "wb-symptom") {
     const log = wellbeing().logs[todayKey()] ||= {};
