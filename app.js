@@ -43,7 +43,8 @@ const defaultState = () => ({
   // Optional cycle-aware training. "asked" records that the opt-in question was answered.
   wellbeing: { enabled: false, logs: {}, skipped: "" }, // logs: { "YYYY-MM-DD": { mood, energy, stress, sleep, symptoms } }
   readinessSuggestions: undefined, // undefined = not chosen yet (follows cycle tracking for older saves)
-  menstrual: { asked: false, enabled: false, periodStarts: [], cycleLength: null, periodLength: 5, regularity: "unknown", contraception: "", checkins: [], dismissedInsights: {} },
+  // periodDays: { "YYYY-MM-DD": "spotting" | "light" | "medium" | "heavy" }
+  menstrual: { asked: false, enabled: false, periodStarts: [], periodDays: {}, cycleLength: null, periodLength: 5, regularity: "unknown", contraception: "", checkins: [], dismissedInsights: {} },
   program: { name: "Glute Growth", repeatWeekly: true, cycleWeeks: 1, activeCycleWeek: 1, cycleStartedAt: todayKey(), days: [
     { id: "mon", day: "Monday", name: "Lower Body", exercises: [
       { id: "hip", name: "Barbell Hip Thrust", sets: 4, reps: 8, rest: 120, notes: "", equipment: "barbell" },
@@ -335,7 +336,30 @@ function menstrual() {
   for (const [key, value] of Object.entries(defaultState().menstrual)) if (state.menstrual[key] === undefined) state.menstrual[key] = value;
   return state.menstrual;
 }
-function sortedPeriodStarts() { return [...new Set(menstrual().periodStarts)].filter(Boolean).sort(); }
+// Periods logged day by day: consecutive flow days (a one-day gap allowed; spotting alone doesn't start a period).
+function periodRuns() {
+  const days = Object.entries(menstrual().periodDays || {}).filter(([, flow]) => flow && flow !== "spotting").map(([date]) => date).sort();
+  const runs = [];
+  for (const date of days) {
+    const run = runs.at(-1);
+    if (run && daysBetween(run.end, date) <= 2) { run.end = date; run.days.push(date); }
+    else runs.push({ start: date, end: date, days: [date] });
+  }
+  return runs.map((run) => ({ ...run, length: daysBetween(run.start, run.end) + 1 }));
+}
+// Cycle starts: day-by-day logs first, plus older start-only entries that aren't near one of them.
+function sortedPeriodStarts() {
+  const runStarts = periodRuns().map((run) => run.start);
+  const legacy = (menstrual().periodStarts || []).filter((start) => start && !runStarts.some((runStart) => Math.abs(daysBetween(runStart, start)) <= 10));
+  return [...new Set([...runStarts, ...legacy])].sort();
+}
+// Typical period length from the user's own logged periods (2+ days), else the setup value.
+function typicalPeriodLength() {
+  // Only finished periods count: at least one full day without flow since the last logged day.
+  const lengths = periodRuns().filter((run) => run.length >= 2 && daysBetween(run.end, todayKey()) >= 2).slice(-6).map((run) => run.length);
+  if (lengths.length) return Math.round(lengths.reduce((sum, length) => sum + length, 0) / lengths.length);
+  return Math.max(2, Number(menstrual().periodLength) || 5);
+}
 function loggedCycleLengths() {
   const starts = sortedPeriodStarts();
   return starts.slice(1).map((start, index) => daysBetween(starts[index], start)).filter((length) => length >= 15 && length <= 60);
@@ -355,7 +379,7 @@ function cycleInfo(dateKey = todayKey()) {
   const nextLogged = sortedPeriodStarts().find((item) => item > dateKey);
   const length = nextLogged ? daysBetween(start, nextLogged) : expectedCycleLength();
   const day = daysBetween(start, dateKey) + 1;
-  const periodLength = Math.max(2, Number(menstrual().periodLength) || 5);
+  const periodLength = typicalPeriodLength();
   const ovulation = Math.max(periodLength + 3, length - 14);
   let bucket;
   if (day <= 2) bucket = "period-early";
@@ -367,7 +391,9 @@ function cycleInfo(dateKey = todayKey()) {
   else bucket = "luteal";
   const phase = { "period-early": "Period", "period-late": "Period", follicular: "Follicular phase", ovulation: "Around ovulation", luteal: "Luteal phase", premenstrual: "Before your period", late: "Period expected" }[bucket];
   const nextPeriod = keyFromDate(new Date(dateFromKey(start).getTime() + length * dayMs));
-  return { start, day, length, bucket, phase, nextPeriod, cycleIndex: starts.length - 1, estimated: !nextLogged };
+  // Estimated fertile window: the 5 days before ovulation, ovulation day and the day after (estimate only).
+  const fertileStart = Math.max(periodLength + 1, ovulation - 5), fertileEnd = ovulation + 1;
+  return { start, day, length, periodLength, bucket, phase, nextPeriod, ovulationDay: ovulation, fertileStart, fertileEnd, inFertile: day >= fertileStart && day <= fertileEnd && day <= length, daysUntilPeriod: length - day + 1, cycleIndex: starts.length - 1, estimated: !nextLogged };
 }
 const bucketPhrases = { "period-early": "the first two days of your period", "period-late": "the later days of your period", follicular: "the days after your period", ovulation: "the days around ovulation", luteal: "the second half of your cycle", premenstrual: "the last few days before your period", late: "the days when your period is late" };
 // A lift's strength score: the best set's estimated one-rep max.
@@ -435,9 +461,12 @@ function renderCycleCard() {
   if (!data.enabled) return "";
   const info = cycleInfo();
   if (!info) return `<section class="cycle-card"><div><strong>Cycle tracking is on</strong><small>Log when your last period started to see your cycle day.</small></div><button class="secondary-button" data-action="log-period">Log period</button></section>`;
-  const next = info.day > info.length ? `Period may be ${info.day - info.length} ${info.day - info.length === 1 ? "day" : "days"} late` : `Next period ≈ ${prettyDate(info.nextPeriod)}`;
-  const phase = hormonalContraception() && !info.bucket.startsWith("period") ? "" : ` · ${info.phase}`;
-  return `<section class="cycle-card"><button class="cycle-summary" data-action="cycle-details" aria-label="Cycle details"><span class="cycle-day" aria-label="Cycle day ${info.day}"><b>${info.day}</b><small>day</small></span><span><strong>Day ${info.day}${phase}</strong><small>${next}${data.regularity === "irregular" || info.estimated ? " · estimate" : ""}</small></span></button><button class="secondary-button cycle-log" data-action="log-period">Log period</button></section>`;
+  const loggedToday = menstrual().periodDays?.[todayKey()];
+  const headline = loggedToday && loggedToday !== "spotting" || info.bucket.startsWith("period") ? `Period · day ${info.day}` : info.day > info.length ? `Period may be ${info.day - info.length} ${info.day - info.length === 1 ? "day" : "days"} late` : `Period in ${info.daysUntilPeriod} ${info.daysUntilPeriod === 1 ? "day" : "days"}`;
+  const inPeriod = loggedToday && loggedToday !== "spotting" || info.bucket.startsWith("period");
+  const flowLabel = loggedToday ? flowOptions.find(([value]) => value === loggedToday)?.[1] : "";
+  const phase = inPeriod ? (flowLabel ? `${flowLabel} flow today` : `Day ${info.day} of your cycle`) : hormonalContraception() ? `Cycle day ${info.day}` : info.inFertile ? `Fertile window (estimate) · day ${info.day}` : `${info.phase} · day ${info.day}`;
+  return `<section class="cycle-card cycle-ring-card"><button class="cycle-summary" data-action="cycle-details" aria-label="Open your cycle">${renderCycleRing(info, 76)}<span><strong>${escapeHtml(headline)}</strong><small>${escapeHtml(phase)}</small><small>Next ≈ ${prettyDate(info.nextPeriod)}${data.regularity === "irregular" || info.estimated ? " · estimate" : ""}</small></span></button><button class="secondary-button cycle-log" data-action="log-period">${loggedToday ? "Edit" : "Log"} period</button></section>`;
 }
 function renderCycleSettings() {
   const data = menstrual();
@@ -480,18 +509,98 @@ function addPeriodStart(dateKey) {
   data.periodStarts.push(dateKey);
   data.periodStarts.sort();
 }
-function showLogPeriod() {
-  const info = cycleInfo();
-  showSheet("Log your period", info ? `Your last logged start was ${prettyDate(info.start, { month: "long", day: "numeric" })}.` : "", `<label class="field"><span class="field-label">Period started on</span><input class="text-field" type="date" id="period-start" max="${todayKey()}" value="${todayKey()}"></label>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="save-period">SAVE</button>`);
+// ---------- Flo-style cycle view: ring, calendar, day-by-day logging, stats ----------
+const flowOptions = [["", "No period"], ["spotting", "Spotting"], ["light", "Light"], ["medium", "Medium"], ["heavy", "Heavy"]];
+const addDays = (key, days) => keyFromDate(new Date(dateFromKey(key).getTime() + days * dayMs));
+function renderCycleRing(info, size) {
+  const length = Math.max(info.length, info.day), radius = 42, circumference = 2 * Math.PI * radius;
+  const arc = (fromDay, toDay, cls) => {
+    const start = (fromDay - 1) / length, span = Math.max(0, (toDay - fromDay + 1) / length);
+    return `<circle class="${cls}" cx="50" cy="50" r="${radius}" stroke-dasharray="${(span * circumference).toFixed(2)} ${circumference.toFixed(2)}" stroke-dashoffset="${(-start * circumference).toFixed(2)}"></circle>`;
+  };
+  const angle = ((Math.min(info.day, length) - 0.5) / length) * 2 * Math.PI - Math.PI / 2;
+  const fertile = hormonalContraception() ? "" : arc(info.fertileStart, Math.min(info.fertileEnd, info.length), "ring-fertile") + arc(info.ovulationDay, info.ovulationDay, "ring-ovulation");
+  return `<svg class="cycle-ring" width="${size}" height="${size}" viewBox="0 0 100 100" role="img" aria-label="Cycle day ${info.day} of about ${info.length}"><g transform="rotate(-90 50 50)"><circle class="ring-track" cx="50" cy="50" r="${radius}"></circle>${arc(1, info.periodLength, "ring-period")}${fertile}</g><circle class="ring-marker" cx="${(50 + radius * Math.cos(angle)).toFixed(2)}" cy="${(50 + radius * Math.sin(angle)).toFixed(2)}" r="6.5"></circle><text x="50" y="50" class="ring-day">${info.day}</text><text x="50" y="66" class="ring-label">DAY</text></svg>`;
 }
-function showCycleDetails() {
+// What each calendar date is: logged flow, predicted period, fertile window, ovulation (predictions for upcoming cycles).
+function cycleDayMarks() {
+  const marks = {};
   const data = menstrual();
+  for (const [date, flow] of Object.entries(data.periodDays || {})) if (flow) marks[date] = { flow };
+  const starts = sortedPeriodStarts();
+  if (!starts.length) return marks;
+  const length = expectedCycleLength(), periodLength = typicalPeriodLength(), today = todayKey();
+  const mark = (date, key) => { (marks[date] ||= {})[key] = true; };
+  // Older start-only entries: show their period days as logged-ish (no flow detail).
+  for (const start of (data.periodStarts || [])) if (start && !periodRuns().some((run) => Math.abs(daysBetween(run.start, start)) <= 10)) for (let i = 0; i < periodLength; i += 1) { const date = addDays(start, i); if (date <= today && !marks[date]?.flow) mark(date, "assumed"); }
+  const lastStart = starts.at(-1);
+  for (let cycle = 0; cycle < 6; cycle += 1) {
+    const cycleStart = addDays(lastStart, cycle * length);
+    if (cycle > 0) for (let i = 0; i < periodLength; i += 1) { const date = addDays(cycleStart, i); if (date > today) mark(date, "predicted"); }
+    if (hormonalContraception()) continue;
+    const ovulationDay = Math.max(periodLength + 3, length - 14);
+    for (let day = Math.max(periodLength + 1, ovulationDay - 5); day <= ovulationDay + 1; day += 1) mark(addDays(cycleStart, day - 1), "fertile");
+    mark(addDays(cycleStart, ovulationDay - 1), "ovulation");
+  }
+  return marks;
+}
+let cycleViewMonth = null;
+function cycleStats() {
+  const starts = sortedPeriodStarts();
+  const cycles = starts.slice(1).map((start, index) => ({ start: starts[index], length: daysBetween(starts[index], start) })).filter((cycle) => cycle.length >= 15 && cycle.length <= 60);
+  const runs = periodRuns();
+  const periodOf = (start) => runs.find((run) => run.start === start)?.length || null;
+  const recent = cycles.slice(-6).map((cycle) => cycle.length);
+  const average = recent.length ? Math.round(recent.reduce((sum, value) => sum + value, 0) / recent.length) : null;
+  const variation = recent.length >= 2 ? Math.max(...recent) - Math.min(...recent) : null;
+  return { cycles, average, variation, regular: recent.length >= 3 ? variation <= 7 : null, periodAverage: typicalPeriodLength(), periodLogged: runs.some((run) => run.length >= 2), periodOf };
+}
+function renderCycleCalendar(monthDate) {
+  const year = monthDate.getFullYear(), month = monthDate.getMonth();
+  const offset = new Date(year, month, 1).getDay(), daysInMonth = new Date(year, month + 1, 0).getDate();
+  const marks = cycleDayMarks(), today = todayKey();
+  const cells = [];
+  for (let i = 0; i < offset; i += 1) cells.push(`<span class="cal-day blank"></span>`);
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const key = keyFromDate(new Date(year, month, day, 12));
+    const mark = marks[key] || {};
+    const classes = ["cal-day", mark.flow ? `flow-${mark.flow}` : mark.assumed ? "flow-assumed" : "", mark.predicted ? "predicted" : "", mark.fertile && !mark.flow ? "fertile" : "", mark.ovulation ? "ovulation" : "", key === today ? "today" : "", key > today ? "future" : ""].filter(Boolean).join(" ");
+    const label = [prettyDate(key, { month: "long", day: "numeric" }), mark.flow ? `${mark.flow} flow` : mark.assumed ? "period" : "", mark.predicted ? "predicted period" : "", mark.fertile ? "fertile window (estimate)" : "", mark.ovulation ? "ovulation (estimate)" : ""].filter(Boolean).join(", ");
+    cells.push(key > today ? `<span class="${classes}" aria-label="${label}">${day}</span>` : `<button class="${classes}" data-action="cycle-day" data-date="${key}" aria-label="${label}">${day}</button>`);
+  }
+  const title = monthDate.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  return `<div class="cycle-calendar"><div class="cal-nav"><button class="inline-icon-button" data-action="cycle-month" data-step="-1" aria-label="Previous month">‹</button><strong>${title}</strong><button class="inline-icon-button" data-action="cycle-month" data-step="1" aria-label="Next month">›</button></div><div class="cal-grid cal-weekdays">${["S", "M", "T", "W", "T", "F", "S"].map((d) => `<span>${d}</span>`).join("")}</div><div class="cal-grid">${cells.join("")}</div><div class="cal-legend"><span><i class="lg-period"></i>Period</span><span><i class="lg-predicted"></i>Predicted</span>${hormonalContraception() ? "" : `<span><i class="lg-fertile"></i>Fertile (est.)</span><span><i class="lg-ovulation"></i>Ovulation (est.)</span>`}</div></div>`;
+}
+function showCycleView(month = null) {
+  if (month) cycleViewMonth = month;
+  if (!cycleViewMonth) { const now = dateFromKey(todayKey()); cycleViewMonth = new Date(now.getFullYear(), now.getMonth(), 1); }
   const info = cycleInfo();
+  const today = todayKey();
+  const todayFlow = menstrual().periodDays?.[today] || "";
+  const quick = `<div class="flow-quick"><div class="field-label">Today · ${prettyDate(today, { weekday: "short", month: "short", day: "numeric" })}</div><div class="flow-options">${flowOptions.map(([value, label]) => `<button class="flow-option${value === todayFlow ? " selected" : ""}${value ? ` flow-${value}-btn` : ""}" data-action="set-flow" data-date="${today}" data-flow="${value}" aria-pressed="${value === todayFlow}">${label}</button>`).join("")}</div></div>`;
+  const stats = cycleStats();
+  const statCard = (label, value, note = "") => `<div class="preview-stat"><span>${label}</span><strong>${value}</strong>${note ? `<small>${note}</small>` : ""}</div>`;
+  const statsBlock = `<div class="preview-stats cycle-stats">${statCard("Cycle", stats.average ? `${stats.average} d` : `${expectedCycleLength()} d`, stats.average ? "average" : "estimate")}${statCard("Period", `${stats.periodAverage} d`, stats.periodLogged ? "average" : "from setup")}${statCard("Variation", stats.variation !== null ? `±${Math.ceil(stats.variation / 2)} d` : "—", stats.regular === null ? "needs 3 cycles" : stats.regular ? "regular" : "irregular")}</div>`;
+  const history = stats.cycles.slice(-6).reverse().map((cycle) => {
+    const period = stats.periodOf(cycle.start);
+    return `<li><span>${prettyDate(cycle.start, { month: "short", day: "numeric" })}</span><span class="cycle-bar" aria-hidden="true"><i style="width:${Math.min(100, ((period || typicalPeriodLength()) / 45) * 100).toFixed(1)}%"></i><b style="width:${Math.min(100, (cycle.length / 45) * 100).toFixed(1)}%"></b></span><span>${cycle.length} d${period ? ` · ${period}-day period` : ""}</span></li>`;
+  }).join("");
   const insights = cycleInsights();
-  const starts = sortedPeriodStarts().slice(-6).reverse().map((start) => `<li>${prettyDate(start, { month: "short", day: "numeric", year: "numeric" })}</li>`).join("");
-  const learned = insights.length ? `<ul class="insight-list">${insights.map((insight) => `<li>${escapeHtml(insight.text)} <small>(${insight.cycles} cycles)</small></li>`).join("")}</ul>` : `<p class="muted-copy">Nothing yet. Honna looks for patterns that repeat in at least two cycles, using how you felt (wellbeing check-ins) and the weights and reps you log. Keep logging your period.</p>`;
-  const lengths = loggedCycleLengths();
-  showSheet("Your cycle", info ? `Day ${info.day} of about ${info.length} · ${hormonalContraception() ? "hormonal contraception noted" : info.phase}` : "No period logged yet.", `<div class="preview-block"><div class="field-label">What Honna has learned</div>${learned}</div><div class="preview-block"><div class="field-label">Logged period starts</div>${starts ? `<ul class="plain-list">${starts}</ul>` : "<p>None yet.</p>"}${lengths.length ? `<p class="muted-copy">Your logged cycles: ${lengths.slice(-6).join(", ")} days.</p>` : ""}</div><div class="preview-block"><div class="field-label">Check-ins</div><p class="muted-copy">${dailySignals().length} days of how-you-felt data so far${wellbeingOn() ? "" : " (turn on Wellbeing tracking to add more)"}.</p></div>`, `<button class="secondary-button" data-action="cycle-setup">Edit settings</button><button class="primary-button" data-action="log-period">LOG PERIOD</button>`);
+  const learned = insights.length ? `<ul class="insight-list">${insights.map((insight) => `<li>${escapeHtml(insight.text)} <small>(${insight.cycles} cycles)</small></li>`).join("")}</ul>` : `<p class="muted-copy">Nothing yet. Honna looks for patterns that repeat in at least two cycles, using how you felt (wellbeing check-ins) and the weights and reps you log.</p>`;
+  const summary = info ? `${renderCycleRing(info, 92)}<div><strong>${info.bucket.startsWith("period") ? `Period · day ${info.day}` : info.day > info.length ? "Period may be late" : `Period in ${info.daysUntilPeriod} ${info.daysUntilPeriod === 1 ? "day" : "days"}`}</strong><small>${hormonalContraception() || info.bucket.startsWith("period") ? `Day ${info.day} of about ${info.length}` : `${info.inFertile ? "Fertile window (estimate)" : info.phase} · day ${info.day} of about ${info.length}`}</small><small>Next period ≈ ${prettyDate(info.nextPeriod, { month: "long", day: "numeric" })}</small></div>` : `<div><strong>No period logged yet</strong><small>Tap a day in the calendar to log it.</small></div>`;
+  const note = hormonalContraception() ? "With hormonal contraception, fertile days and ovulation aren't shown." : "Fertile window and ovulation are estimates from your cycle dates. Not for contraception or fertility planning.";
+  showSheet("Your cycle", "", `<div class="cycle-view-top">${summary}</div>${quick}${renderCycleCalendar(cycleViewMonth)}<p class="muted-copy">${note}</p><div class="preview-block"><div class="field-label">Your cycle stats</div>${statsBlock}</div>${history ? `<div class="preview-block"><div class="field-label">Cycle history</div><ul class="cycle-history">${history}</ul></div>` : ""}<div class="preview-block"><div class="field-label">What Honna has learned</div>${learned}</div>`, `<button class="secondary-button" data-action="cycle-setup">Settings</button><button class="primary-button" data-action="close-sheet">DONE</button>`);
+}
+function showPeriodDayLog(date) {
+  const flow = menstrual().periodDays?.[date] || "";
+  showSheet(prettyDate(date, { weekday: "long", month: "long", day: "numeric" }), "How was your flow this day?", `<div class="flow-options flow-options-large">${flowOptions.map(([value, label]) => `<button class="flow-option${value === flow ? " selected" : ""}${value ? ` flow-${value}-btn` : ""}" data-action="set-flow" data-date="${date}" data-flow="${value}" data-back="1">${label}</button>`).join("")}</div>`, `<button class="secondary-button" data-action="cycle-details">Back</button>`);
+}
+function setPeriodDay(date, flow) {
+  const data = menstrual();
+  data.periodDays ||= {};
+  if (flow) data.periodDays[date] = flow; else delete data.periodDays[date];
+  // A start-only entry on this exact date is now covered (or explicitly cleared) by the day log.
+  if (!flow) data.periodStarts = (data.periodStarts || []).filter((start) => start !== date);
 }
 // ---------- Wellbeing tracking & training readiness suggestions ----------
 function wellbeing() {
@@ -2283,9 +2392,11 @@ document.addEventListener("click", (event) => {
   else if (action === "save-cycle-setup") saveCycleSetup();
   else if (action === "cycle-decline") { menstrual().asked = true; save(); render(); toast("No problem. You can turn it on anytime in Profile."); }
   else if (action === "cycle-disable") { menstrual().enabled = false; save(); render(); toast("Cycle-aware training is off. Your logged data is kept."); }
-  else if (action === "log-period") showLogPeriod();
-  else if (action === "save-period") { const value = document.querySelector("#period-start")?.value; if (!value || value > todayKey()) return; addPeriodStart(value); save(); document.querySelector(".overlay")?.remove(); render(); toast("Period logged."); }
-  else if (action === "cycle-details") showCycleDetails();
+  else if (action === "log-period") showCycleView();
+  else if (action === "cycle-month") { const step = Number(button.dataset.step); cycleViewMonth = new Date(cycleViewMonth.getFullYear(), cycleViewMonth.getMonth() + step, 1); showCycleView(); }
+  else if (action === "cycle-day") showPeriodDayLog(button.dataset.date);
+  else if (action === "set-flow") { setPeriodDay(button.dataset.date, button.dataset.flow); save(); render(); showCycleView(); toast(button.dataset.flow ? `${flowOptions.find(([value]) => value === button.dataset.flow)[1]} logged for ${prettyDate(button.dataset.date)}.` : `Cleared ${prettyDate(button.dataset.date)}.`); }
+  else if (action === "cycle-details") showCycleView();
   else if (action === "wb-set") { setWellbeingValue(button.dataset.field, Number(button.dataset.value)); save(); if (button.dataset.context === "sheet") showPreWorkoutCheckIn(pendingWorkoutStart); else render(); }
   else if (action === "wb-symptom") {
     const log = wellbeing().logs[todayKey()] ||= {};
