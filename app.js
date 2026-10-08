@@ -477,8 +477,9 @@ function renderCycleSettings() {
   const wellbeingRow = `<div class="setting-row"><div><strong>Wellbeing tracking</strong><small>${wellbeingOn() ? `Mood, energy, stress, sleep & symptoms · ${logged} ${logged === 1 ? "day" : "days"} logged` : "Quick daily mood, energy, stress, sleep & symptoms"}</small></div>${select("toggle-wellbeing", wellbeingOn(), "Wellbeing tracking")}</div>`;
   const readinessRow = `<div class="setting-row"><div><strong>Training readiness suggestions</strong><small>Gentle suggestions from your ${[wellbeingOn() ? "wellbeing" : "", cycleTrackingOn() ? "cycle" : ""].filter(Boolean).join(" & ") || "wellbeing & cycle"} data. Never automatic.</small></div>${select("toggle-readiness", readinessOn(), "Training readiness suggestions")}</div>`;
   const details = cycleTrackingOn() ? `<div class="setting-row"><div><strong>My cycle & what Honna learned</strong><small>${dailySignals().length} days of check-ins · ${sortedPeriodStarts().length} periods logged</small></div><button class="link-button" data-action="cycle-details">View ${icon("arrow")}</button></div>` : "";
+  const tipRow = `<div class="setting-row"><div><strong>Tip of the day</strong><small>A short, sourced training tip on Home</small></div>${select("toggle-tip", tipOfTheDayOn(), "Tip of the day")}</div>`;
   const research = `<div class="setting-row"><div><strong>What the research says</strong><small>Evidence-based training tips with sources</small></div><button class="link-button" data-action="research-library">Read ${icon("arrow")}</button></div>`;
-  return `<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Wellbeing & training</div>${cycleRow}${wellbeingRow}${readinessRow}${details}${research}</section>`;
+  return `<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Wellbeing & training</div>${cycleRow}${wellbeingRow}${readinessRow}${details}${tipRow}${research}</section>`;
 }
 function showCycleSetup() {
   const data = menstrual();
@@ -744,6 +745,19 @@ const sourceLink = (key) => { const source = researchSources[key]; return source
 function renderAdviceList(advice) {
   return advice.length ? `<ul class="advice-list">${advice.map((item) => `<li><span>${escapeHtml(item.text)}</span>${sourceLink(item.source)}</li>`).join("")}</ul>` : "";
 }
+// One tip per day, cycling through the library in order (the same tip all day, a new one tomorrow).
+function tipOfTheDayOn() { return state.tipOfDay !== false; }
+function tipOfTheDay() {
+  const tips = researchLibrary.filter((tip) => tip.topic !== "Cycle" || cycleAvailable());
+  if (!tips.length) return null;
+  const day = Math.round((dateFromKey(todayKey()).getTime() - dateFromKey("2026-01-01").getTime()) / dayMs);
+  return tips[((day % tips.length) + tips.length) % tips.length];
+}
+function renderTipOfTheDay() {
+  const tip = tipOfTheDayOn() ? tipOfTheDay() : null;
+  if (!tip) return "";
+  return `<section class="section"><div class="section-heading"><h2>Tip of the day</h2><button class="link-button" data-action="research-library">All tips</button></div><div class="tip-card"><span class="eyebrow">${escapeHtml(tip.topic)}</span><strong>${escapeHtml(tip.title)}</strong><p>${escapeHtml(tip.text)}</p>${sourceLink(tip.source)}</div></section>`;
+}
 function showResearchLibrary() {
   const topics = [...new Set(researchLibrary.map((tip) => tip.topic))].filter((topic) => topic !== "Cycle" || cycleAvailable());
   const body = topics.map((topic) => `<div class="preview-block"><div class="field-label">${topic}</div><ul class="advice-list">${researchLibrary.filter((tip) => tip.topic === topic).map((tip) => `<li><strong>${escapeHtml(tip.title)}</strong><span>${escapeHtml(tip.text)}</span>${sourceLink(tip.source)}</li>`).join("")}</ul></div>`).join("");
@@ -883,7 +897,7 @@ function renderHome() {
     : state.history.filter((item) => new Date(`${item.date}T12:00:00`).getTime() >= weekStart().getTime()).length;
   if (!workout && state.program.days.length) {
     const repeatMessage = state.program.repeatWeekly ? "Your weekly cycle starts again next week." : "This plan is complete. Turn on weekly repeat in Plan if you'd like to reuse it.";
-    return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderUndoFinishCard()}<div class="surface empty-state"><h3>${state.program.repeatWeekly ? "Your week is complete" : "Plan complete"}</h3><p>${repeatMessage}</p><div class="empty-actions"><button class="primary-button" data-tab="Plan">REVIEW MY PLAN</button>${state.history.length ? `<button class="link-button" data-action="reopen-session-picker">Reopen a session</button>` : ""}</div></div>`;
+    return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderUndoFinishCard()}<div class="surface empty-state"><h3>${state.program.repeatWeekly ? "Your week is complete" : "Plan complete"}</h3><p>${repeatMessage}</p><div class="empty-actions"><button class="primary-button" data-tab="Plan">REVIEW MY PLAN</button>${state.history.length ? `<button class="link-button" data-action="reopen-session-picker">Reopen a session</button>` : ""}</div></div>${renderTipOfTheDay()}`;
   }
   if (!workout) return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section><div class="surface empty-state"><h3>Your next chapter starts here</h3><p>Start with a recommended plan, create your own, or import the one you already follow.</p><div class="empty-actions"><button class="primary-button" data-action="use-recommended-plan">USE ${escapeHtml(recommendedPlan().name.toUpperCase())}</button><button class="secondary-button" data-action="create-program">Create my plan</button></div></div>`;
   const isToday = scheduledWorkout.day === todayDay();
@@ -892,6 +906,7 @@ function renderHome() {
     <div class="section-heading"><h2>${isToday ? "Today's workout" : "Up next"}</h2><button class="link-button" data-tab="Plan">View plan</button></div>
     <section class="today-card"><div class="today-top"><span class="eyebrow">${escapeHtml(scheduledWorkout.day)} · ${isToday ? "Today" : "Coming up"}${alternate ? " · Changed for today" : ""}</span><div class="today-card-actions"><span class="date-chip">${weekdayNames.includes(scheduledWorkout.day) ? prettyDate(keyFromDate(weekdayDate(scheduledWorkout.day)), { month: "short", day: "numeric" }) : "Any day"}</span>${alternatives.length ? `<button class="today-options-button" data-action="change-today-workout" data-scheduled-day-id="${scheduledWorkout.id}" aria-label="More workout options" title="More workout options">${icon("more")}</button>` : ""}</div></div><div class="today-title">${escapeHtml(workout.name)}</div><p class="today-meta">${workout.exercises.length} exercises <span aria-hidden="true">·</span> Approximately ${estimateDuration(workout)} min</p><div class="today-bottom"><div class="avatar-stack"><span class="tiny-dots"><i></i><i></i><i></i></span><span>${escapeHtml(state.program.name)}</span></div><button class="primary-button" data-action="start-workout" data-workout-id="${workout.id}" data-scheduled-workout-id="${scheduledWorkout.id}">${state.activeWorkout?.workoutId === workout.id ? "RESUME WORKOUT" : "START WORKOUT"} ${icon("arrow")}</button></div></section>
     <section class="section"><div class="section-heading"><h2>Today's flow</h2><span class="eyebrow">${workout.exercises.length} moves</span></div><div class="exercise-preview">${workout.exercises.map((exercise, index) => `<button class="exercise-row" data-action="preview-exercise" data-day-id="${workout.id}" data-exercise-id="${exercise.id}" aria-label="Preview ${escapeHtml(exercise.name)}"><span class="exercise-number">${String(index + 1).padStart(2, "0")}</span><span class="exercise-row-main"><span class="exercise-row-name">${escapeHtml(exercise.name)}</span>${exercise.notes ? `<span class="exercise-row-detail">${escapeHtml(exercise.notes)}</span>` : ""}</span><span class="target-pill">${exercise.sets} × ${exercise.reps || "—"}</span></button>`).join("") || `<div class="empty-state"><p>Add exercises to this workout in your plan.</p></div>`}</div></section>
+    ${renderTipOfTheDay()}
     ${last ? `<section class="section"><div class="section-heading"><h2>Last workout</h2><button class="link-button" data-tab="Progress">History</button></div><div class="last-workout"><div><div class="exercise-row-name">${escapeHtml(last.name)}</div><div class="exercise-row-detail">Completed ${prettyDate(last.date, { weekday: "long", month: "short", day: "numeric" })}</div></div><span class="last-icon">${icon("history")}</span></div></section>` : ""}
     <section class="section"><div class="section-heading"><h2>This week</h2></div><div class="week-summary"><span class="week-count">${thisWeek}<span style="font-size:15px;color:#9ba49c"> / ${cycleDays.length || 0}</span></span><div class="week-copy">workouts completed<small>Every session adds up.</small><div class="progress-track"><span style="width:${Math.min(100, cycleDays.length ? thisWeek / cycleDays.length * 100 : 0)}%"></span></div></div></div></section>`;
 }
@@ -2411,6 +2426,7 @@ function bindSelects() {
     if (select.dataset.change === "units") { state.units = select.value; if (state.units === "lbs" && Number(state.weightStep) === 2.5) state.weightStep = 5; else if (state.units === "kg" && Number(state.weightStep) === 5) state.weightStep = 2.5; }
     if (select.dataset.change === "weight-step") state.weightStep = Number(select.value);
     if (select.dataset.change === "toggle-wellbeing") { wellbeing().enabled = select.value === "on"; toast(select.value === "on" ? "Wellbeing tracking is on. Check in from Home." : "Wellbeing tracking is off. Your past logs are kept."); }
+    if (select.dataset.change === "toggle-tip") state.tipOfDay = select.value === "on";
     if (select.dataset.change === "toggle-readiness") { state.readinessSuggestions = select.value === "on"; toast(select.value === "on" ? "Readiness suggestions are on. Honna will only suggest; you decide." : "Readiness suggestions are off."); }
     if (select.dataset.change === "toggle-cycle") {
       if (select.value === "on") { if (sortedPeriodStarts().length) { menstrual().enabled = true; menstrual().asked = true; } else { save(); render(); showCycleSetup(); return; } }
