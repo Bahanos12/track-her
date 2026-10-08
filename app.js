@@ -41,6 +41,8 @@ const defaultState = () => ({
   version: 1, onboarded: false, name: "Sarah", units: "kg", weightStep: 2.5, theme: "plum", activeTab: "Home", activeWorkout: null, workoutPaused: false, todayWorkoutOverride: null, restAlerts: "", // "" = not asked, "on" | "off"
   sex: "", // "female" | "male" | "unspecified" ("" = not asked yet)
   // Optional cycle-aware training. "asked" records that the opt-in question was answered.
+  wellbeing: { enabled: false, logs: {}, skipped: "" }, // logs: { "YYYY-MM-DD": { mood, energy, stress, sleep, symptoms } }
+  readinessSuggestions: undefined, // undefined = not chosen yet (follows cycle tracking for older saves)
   menstrual: { asked: false, enabled: false, periodStarts: [], cycleLength: null, periodLength: 5, regularity: "unknown", contraception: "", checkins: [], dismissedInsights: {} },
   program: { name: "Glute Growth", repeatWeekly: true, cycleWeeks: 1, activeCycleWeek: 1, cycleStartedAt: todayKey(), days: [
     { id: "mon", day: "Monday", name: "Lower Body", exercises: [
@@ -373,16 +375,15 @@ const setScore = (set) => (Number(set.weight) || 0) * (1 + (Number(set.reps) || 
 // Learn recurring patterns from the user's own check-ins and workouts. A pattern needs at least two different cycles.
 function cycleInsights() {
   const data = menstrual();
-  // Only self-rated check-ins count (accepting a suggestion without rating must not reinforce the suggestion).
-  const checkins = data.checkins.filter((checkin) => ["good", "off", "rough"].includes(checkin.level)).map((checkin) => ({ ...checkin, info: cycleInfo(checkin.date) })).filter((checkin) => checkin.info);
+  const checkins = dailySignals().map((signal) => ({ ...signal, info: cycleInfo(signal.date) })).filter((signal) => signal.info);
   const insights = [];
   if (checkins.length >= 4) {
-    const lowOverall = checkins.filter((checkin) => checkin.level !== "good").length / checkins.length;
+    const lowOverall = checkins.filter((checkin) => checkin.low).length / checkins.length;
     for (const bucket of Object.keys(bucketPhrases)) {
       const inBucket = checkins.filter((checkin) => checkin.info.bucket === bucket);
       const cycles = new Set(inBucket.map((checkin) => checkin.info.cycleIndex));
       if (inBucket.length < 2 || cycles.size < 2) continue;
-      const low = inBucket.filter((checkin) => checkin.level !== "good");
+      const low = inBucket.filter((checkin) => checkin.low);
       const lowCycles = new Set(low.map((checkin) => checkin.info.cycleIndex));
       if (low.length / inBucket.length >= 0.6 && lowCycles.size >= 2 && low.length / inBucket.length >= lowOverall + 0.2) {
         insights.push({ id: `energy-${bucket}`, bucket, kind: "energy", strength: low.length / inBucket.length, cycles: lowCycles.size, text: `You usually report lower energy during ${bucketPhrases[bucket]}.` });
@@ -439,11 +440,15 @@ function renderCycleCard() {
   return `<section class="cycle-card"><button class="cycle-summary" data-action="cycle-details" aria-label="Cycle details"><span class="cycle-day" aria-label="Cycle day ${info.day}"><b>${info.day}</b><small>day</small></span><span><strong>Day ${info.day}${phase}</strong><small>${next}${data.regularity === "irregular" || info.estimated ? " · estimate" : ""}</small></span></button><button class="secondary-button cycle-log" data-action="log-period">Log period</button></section>`;
 }
 function renderCycleSettings() {
-  if (!cycleAvailable()) return "";
   const data = menstrual();
-  const info = data.enabled ? cycleInfo() : null;
-  const status = data.enabled ? (info ? `On · cycle day ${info.day}` : "On · log your period to start") : "Off";
-  return `<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Cycle-aware training</div><div class="setting-row"><div><strong>Adapt training to my cycle</strong><small>${status}. Honna only suggests changes; you decide.</small></div>${data.enabled ? `<button class="link-button" data-action="cycle-disable">Turn off</button>` : `<button class="link-button" data-action="cycle-setup">Turn on ${icon("arrow")}</button>`}</div>${data.enabled ? `<div class="setting-row"><div><strong>My cycle & what Honna learned</strong><small>${data.checkins.length} check-ins · ${sortedPeriodStarts().length} periods logged</small></div><button class="link-button" data-action="cycle-details">View ${icon("arrow")}</button></div>` : ""}</section>`;
+  const select = (change, on, label) => `<select class="select-field" data-change="${change}" aria-label="${label}"><option value="on" ${on ? "selected" : ""}>On</option><option value="off" ${on ? "" : "selected"}>Off</option></select>`;
+  const info = cycleTrackingOn() ? cycleInfo() : null;
+  const cycleRow = cycleAvailable() ? `<div class="setting-row"><div><strong>Menstrual cycle tracking</strong><small>${cycleTrackingOn() ? (info ? `Cycle day ${info.day}` : "Log your period to start") : "Cycle day, next period and your own patterns"}</small></div>${select("toggle-cycle", cycleTrackingOn(), "Menstrual cycle tracking")}</div>` : "";
+  const logged = Object.values(wellbeing().logs).filter(wellbeingComplete).length;
+  const wellbeingRow = `<div class="setting-row"><div><strong>Wellbeing tracking</strong><small>${wellbeingOn() ? `Mood, energy, stress, sleep & symptoms · ${logged} ${logged === 1 ? "day" : "days"} logged` : "Quick daily mood, energy, stress, sleep & symptoms"}</small></div>${select("toggle-wellbeing", wellbeingOn(), "Wellbeing tracking")}</div>`;
+  const readinessRow = `<div class="setting-row"><div><strong>Training readiness suggestions</strong><small>Gentle suggestions from your ${[wellbeingOn() ? "wellbeing" : "", cycleTrackingOn() ? "cycle" : ""].filter(Boolean).join(" & ") || "wellbeing & cycle"} data. Never automatic.</small></div>${select("toggle-readiness", readinessOn(), "Training readiness suggestions")}</div>`;
+  const details = cycleTrackingOn() ? `<div class="setting-row"><div><strong>My cycle & what Honna learned</strong><small>${dailySignals().length} days of check-ins · ${sortedPeriodStarts().length} periods logged</small></div><button class="link-button" data-action="cycle-details">View ${icon("arrow")}</button></div>` : "";
+  return `<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Wellbeing & training</div>${cycleRow}${wellbeingRow}${readinessRow}${details}</section>`;
 }
 function showCycleSetup() {
   const data = menstrual();
@@ -484,34 +489,113 @@ function showCycleDetails() {
   const info = cycleInfo();
   const insights = cycleInsights();
   const starts = sortedPeriodStarts().slice(-6).reverse().map((start) => `<li>${prettyDate(start, { month: "short", day: "numeric", year: "numeric" })}</li>`).join("");
-  const learned = insights.length ? `<ul class="insight-list">${insights.map((insight) => `<li>${escapeHtml(insight.text)} <small>(${insight.cycles} cycles)</small></li>`).join("")}</ul>` : `<p class="muted-copy">Nothing yet. Honna looks for patterns that repeat in at least two cycles, using your check-ins before workouts and the weights and reps you log. Keep checking in and logging your period.</p>`;
+  const learned = insights.length ? `<ul class="insight-list">${insights.map((insight) => `<li>${escapeHtml(insight.text)} <small>(${insight.cycles} cycles)</small></li>`).join("")}</ul>` : `<p class="muted-copy">Nothing yet. Honna looks for patterns that repeat in at least two cycles, using how you felt (wellbeing check-ins) and the weights and reps you log. Keep logging your period.</p>`;
   const lengths = loggedCycleLengths();
-  showSheet("Your cycle", info ? `Day ${info.day} of about ${info.length} · ${hormonalContraception() ? "hormonal contraception noted" : info.phase}` : "No period logged yet.", `<div class="preview-block"><div class="field-label">What Honna has learned</div>${learned}</div><div class="preview-block"><div class="field-label">Logged period starts</div>${starts ? `<ul class="plain-list">${starts}</ul>` : "<p>None yet.</p>"}${lengths.length ? `<p class="muted-copy">Your logged cycles: ${lengths.slice(-6).join(", ")} days.</p>` : ""}</div><div class="preview-block"><div class="field-label">Check-ins</div><p class="muted-copy">${data.checkins.length} before workouts so far.</p></div>`, `<button class="secondary-button" data-action="cycle-setup">Edit settings</button><button class="primary-button" data-action="log-period">LOG PERIOD</button>`);
+  showSheet("Your cycle", info ? `Day ${info.day} of about ${info.length} · ${hormonalContraception() ? "hormonal contraception noted" : info.phase}` : "No period logged yet.", `<div class="preview-block"><div class="field-label">What Honna has learned</div>${learned}</div><div class="preview-block"><div class="field-label">Logged period starts</div>${starts ? `<ul class="plain-list">${starts}</ul>` : "<p>None yet.</p>"}${lengths.length ? `<p class="muted-copy">Your logged cycles: ${lengths.slice(-6).join(", ")} days.</p>` : ""}</div><div class="preview-block"><div class="field-label">Check-ins</div><p class="muted-copy">${dailySignals().length} days of how-you-felt data so far${wellbeingOn() ? "" : " (turn on Wellbeing tracking to add more)"}.</p></div>`, `<button class="secondary-button" data-action="cycle-setup">Edit settings</button><button class="primary-button" data-action="log-period">LOG PERIOD</button>`);
 }
-// Quick readiness check before a workout. Nothing changes unless the user picks an adapted option.
+// ---------- Wellbeing tracking & training readiness suggestions ----------
+function wellbeing() {
+  if (!state.wellbeing || typeof state.wellbeing !== "object") state.wellbeing = {};
+  for (const [key, value] of Object.entries(defaultState().wellbeing)) if (state.wellbeing[key] === undefined) state.wellbeing[key] = value;
+  return state.wellbeing;
+}
+function wellbeingOn() { return wellbeing().enabled === true; }
+function readinessOn() { return (state.readinessSuggestions ?? Boolean(state.menstrual?.enabled)) === true; }
+function cycleTrackingOn() { return menstrual().enabled && cycleAvailable(); }
+const wellbeingFields = [
+  { key: "mood", label: "Mood", low: "Low", high: "Great", faces: ["😞", "🙁", "😐", "🙂", "😄"] },
+  { key: "energy", label: "Energy", low: "Drained", high: "Energised" },
+  { key: "stress", label: "Stress", low: "Calm", high: "Very stressed" },
+  { key: "sleep", label: "Sleep", low: "Poor", high: "Great" },
+];
+function wellbeingSymptomOptions() { return symptomOptions.filter((symptom) => cycleAvailable() || !["Cramps", "Bloating"].includes(symptom)); }
+function todaysWellbeing() { return wellbeing().logs[todayKey()] || null; }
+function wellbeingComplete(log) { return Boolean(log) && wellbeingFields.every((field) => Number(log[field.key]) >= 1); }
+// Every day with a self-reported state, for learning cycle patterns: wellbeing logs (when on) and older check-ins.
+function dailySignals() {
+  const byDate = new Map();
+  for (const checkin of menstrual().checkins || []) {
+    if (["good", "off", "rough"].includes(checkin.level)) byDate.set(checkin.date, { date: checkin.date, low: checkin.level !== "good", symptoms: checkin.symptoms || [] });
+  }
+  if (wellbeingOn()) for (const [date, log] of Object.entries(wellbeing().logs)) {
+    if (!wellbeingComplete(log)) continue;
+    byDate.set(date, { date, low: Number(log.energy) <= 2 || Number(log.mood) <= 2 || (Number(log.sleep) <= 2 && Number(log.energy) <= 3), symptoms: log.symptoms || [] });
+  }
+  return [...byDate.values()];
+}
+let wellbeingEditing = false, wellbeingSymptomsOpen = false;
+function renderWellbeingForm(log, context) {
+  const scale = (field) => `<div class="wb-row"><span class="wb-label">${field.label}</span><div class="wb-scale" role="radiogroup" aria-label="${field.label}">${[1, 2, 3, 4, 5].map((value) => `<button class="wb-dot${Number(log?.[field.key]) === value ? " selected" : ""}" data-action="wb-set" data-field="${field.key}" data-value="${value}" data-context="${context}" role="radio" aria-checked="${Number(log?.[field.key]) === value}" aria-label="${field.label} ${value} of 5">${field.faces ? field.faces[value - 1] : value}</button>`).join("")}</div><span class="wb-ends"><small>${field.low}</small><small>${field.high}</small></span></div>`;
+  const symptoms = log?.symptoms || [];
+  const chips = wellbeingSymptomOptions().map((symptom) => `<button class="symptom-chip${symptoms.includes(symptom) ? " selected" : ""}" data-action="wb-symptom" data-symptom="${symptom}" data-context="${context}" aria-pressed="${symptoms.includes(symptom)}">${symptom}</button>`).join("");
+  const open = wellbeingSymptomsOpen || symptoms.length > 0;
+  return `<div class="wb-form">${wellbeingFields.map(scale).join("")}${open ? `<div class="field-label" style="margin-top:8px">Symptoms <small>(optional)</small></div><div class="symptom-chips">${chips}</div>` : `<button class="link-button wb-more" data-action="wb-symptoms-open" data-context="${context}">+ Symptoms (optional)</button>`}</div>`;
+}
+function wellbeingSummary(log) {
+  const parts = wellbeingFields.map((field) => `${field.label} ${field.faces ? field.faces[log[field.key] - 1] : `${log[field.key]}/5`}`);
+  return parts.join(" · ") + (log.symptoms?.length ? ` · ${log.symptoms.join(", ")}` : "");
+}
+const suggestionCopy = { keep: "Looks like a good day for your planned workout.", adapted: "Consider reducing intensity today.", light: "A lighter session might suit you today." };
+function renderWellbeingCard() {
+  if (!wellbeingOn()) return "";
+  const log = todaysWellbeing();
+  const skippedToday = wellbeing().skipped === todayKey();
+  if (wellbeingComplete(log) && !wellbeingEditing) {
+    const suggestion = readinessOn() ? readinessSuggestion() : null;
+    return `<section class="cycle-card wb-card wb-done"><div><strong>Today's check-in</strong><small>${escapeHtml(wellbeingSummary(log))}</small>${suggestion ? `<small class="wb-suggestion">${suggestionCopy[suggestion.level]}</small>` : ""}</div><button class="secondary-button cycle-log" data-action="wb-edit">Edit</button></section>`;
+  }
+  if (skippedToday && !wellbeingEditing) return "";
+  return `<section class="cycle-card wb-card"><div class="wb-head"><strong>How are you today?</strong><button class="link-button" data-action="wb-skip">Not today</button></div>${renderWellbeingForm(log, "card")}</section>`;
+}
+function setWellbeingValue(field, value) {
+  const logs = wellbeing().logs;
+  const log = logs[todayKey()] ||= {};
+  log[field] = value; log.updatedAt = Date.now();
+  if (wellbeingComplete(log)) wellbeingEditing = false;
+}
+// Gentle suggestion from today's wellbeing and the user's own cycle patterns. Never applied automatically.
+function readinessSuggestion() {
+  const reasons = [];
+  let score = 0;
+  const log = wellbeingOn() ? todaysWellbeing() : null;
+  if (log) {
+    const energy = Number(log.energy), sleep = Number(log.sleep), stress = Number(log.stress), mood = Number(log.mood);
+    if (energy === 1) { score += 2.5; reasons.push("very low energy"); } else if (energy === 2) { score += 2; reasons.push("low energy"); }
+    if (sleep === 1) { score += 2; reasons.push("very poor sleep"); } else if (sleep === 2) { score += 1.5; reasons.push("poor sleep"); }
+    if (stress === 5) { score += 1.5; reasons.push("very high stress"); } else if (stress === 4) { score += 1; reasons.push("high stress"); }
+    if (mood && mood <= 2) { score += 1; reasons.push("low mood"); }
+    const strong = (log.symptoms || []).filter((symptom) => ["Cramps", "Headache", "Fatigue", "Low energy", "Sore muscles"].includes(symptom));
+    if (strong.length) { score += Math.min(2, strong.length * 0.75); reasons.push(strong.map((symptom) => symptom.toLowerCase()).join(", ")); }
+    // Compared with the user's own usual energy (needs a week of logs).
+    const history = Object.entries(wellbeing().logs).filter(([date, item]) => date !== todayKey() && Number(item.energy) >= 1).map(([, item]) => Number(item.energy));
+    if (history.length >= 7 && energy) {
+      const usual = history.reduce((sum, value) => sum + value, 0) / history.length;
+      if (energy <= usual - 1.5) { score += 0.5; reasons.push("lower energy than usual for you"); }
+    }
+  }
+  const pattern = cycleTrackingOn() ? todaysCycleSuggestion() : null;
+  if (pattern) { score += 2; reasons.push(pattern.text.replace(/\.$/, "").replace(/^You /, "you ").replace(/^Your /, "your ")); }
+  const level = score >= 4 ? "light" : score >= 2 ? "adapted" : "keep";
+  return { level, score, reasons, pattern };
+}
+// Before a workout: optional quick check-in (if wellbeing is on and today isn't logged), then a suggestion (if readiness is on).
 let pendingWorkoutStart = null;
-function showReadinessCheck(start, level = null, symptoms = []) {
-  pendingWorkoutStart = { ...start, level, symptoms };
-  const info = cycleInfo();
-  const suggestion = todaysCycleSuggestion();
-  const insight = suggestion && !level ? `<div class="cycle-insight"><p>${escapeHtml(suggestion.text)} Would you like me to adapt today’s workout?</p><div class="cycle-actions"><button class="secondary-button" data-action="insight-no">Keep my plan</button><button class="primary-button" data-action="insight-yes">ADAPT</button></div></div>` : "";
-  const chip = (symptom) => `<button class="symptom-chip${symptoms.includes(symptom) ? " selected" : ""}" data-action="toggle-symptom" data-symptom="${symptom}" aria-pressed="${symptoms.includes(symptom)}">${symptom}</button>`;
-  const levels = [["good", "🟢", "Feeling good", "Do the planned workout"], ["off", "🟡", "Feeling off", "See an adapted option"], ["rough", "🔴", "Feeling rough", "See a lighter session"]];
-  const options = levels.map(([value, dot, label, hint]) => `<button class="readiness-option${level === value ? " selected" : ""}" data-action="readiness" data-level="${value}"><span class="readiness-dot" aria-hidden="true">${dot}</span><span><strong>${label}</strong><small>${hint}</small></span></button>`).join("");
-  const title = info ? `Day ${info.day}${hormonalContraception() && !info.bucket.startsWith("period") ? "" : ` · ${info.phase}`}` : "";
-  showSheet("How are you feeling today?", title, `${insight}<div class="readiness-options">${options}</div><div class="field-label" style="margin-top:14px">Anything to note? <small>(optional)</small></div><div class="symptom-chips">${symptomOptions.map(chip).join("")}</div>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button>`);
+function showPreWorkoutCheckIn(start) {
+  pendingWorkoutStart = start;
+  showSheet("Quick check-in", "Optional · a few taps. It helps Honna suggest how hard to go today.", renderWellbeingForm(todaysWellbeing(), "sheet"), `<button class="secondary-button" data-action="prestart-skip">Skip</button><button class="primary-button" data-action="prestart-continue">CONTINUE</button>`);
 }
-function recordCheckin(level, symptoms, choice) {
-  const info = cycleInfo();
-  const checkin = { date: todayKey(), level, symptoms, choice, cycleDay: info?.day || null, bucket: info?.bucket || null };
-  const data = menstrual();
-  data.checkins = [...data.checkins.filter((item) => item.date !== checkin.date), checkin].slice(-400);
-  return checkin;
+function showReadinessSuggestion(start) {
+  pendingWorkoutStart = start;
+  const suggestion = readinessSuggestion();
+  if (suggestion.level === "keep" || state.readinessDeclined === todayKey()) { beginCheckedWorkout("normal", suggestion); return; }
+  const why = suggestion.reasons.length ? `Based on ${suggestion.reasons.join("; ")}.` : "";
+  const option = (choice, title, detail) => `<button class="readiness-option${choice === suggestion.level ? " selected" : ""}" data-action="adapt-choice" data-choice="${choice === "keep" ? "normal" : choice}"><span><strong>${title}${choice === suggestion.level ? " · suggested" : ""}</strong><small>${detail}</small></span></button>`;
+  showSheet("A gentle suggestion", `${suggestionCopy[suggestion.level]} ${why} You decide.`, `<div class="readiness-options">${option("keep", "Keep my planned workout", "Nothing changes")}${option("adapted", "Reduce intensity", "One set fewer per exercise, same weights, stop 1–2 reps short of failure")}${option("light", "Lighter session", "About half the sets, ~10% lighter, longer rest")}</div>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button>`);
 }
-function showAdaptationOffer(level) {
-  const light = level === "rough";
-  const what = light ? "About half the sets, weights around 10% lighter and longer rest. A lighter session still counts as today's workout." : "One set fewer on each exercise (never below one), same weights. Stop each set a little further from failure.";
-  showSheet(light ? "Lighter session?" : "Adapted workout?", what, "", `<button class="secondary-button" data-action="adapt-choice" data-choice="normal">Keep my plan</button><button class="primary-button" data-action="adapt-choice" data-choice="${light ? "light" : "adapted"}">${light ? "GO LIGHTER" : "USE ADAPTED"}</button>`);
+function beginStartFlowChecks(start) {
+  if (!readinessOn()) { launchWorkout(start.workoutId, start.scheduledWorkoutId); return; }
+  if (wellbeingOn() && !wellbeingComplete(todaysWellbeing()) && wellbeing().skipped !== todayKey()) { showPreWorkoutCheckIn(start); return; }
+  showReadinessSuggestion(start);
 }
 // Apply the chosen adaptation to today's session only; the plan is never changed.
 function applyAdaptation(choice) {
@@ -528,13 +612,13 @@ function applyAdaptation(choice) {
     exercise.notes = [choice === "light" ? "Lighter session today" : "Adapted today: aim ~1–2 reps further from failure", exercise.notes].filter(Boolean).join(" · ");
   }
 }
-function beginCheckedWorkout(choice) {
+function beginCheckedWorkout(choice, suggestion = readinessSuggestion()) {
   const start = pendingWorkoutStart;
   if (!start) return;
   pendingWorkoutStart = null;
-  const checkin = recordCheckin(start.level || "good", start.symptoms || [], choice);
+  if (choice === "normal" && suggestion.level !== "keep") state.readinessDeclined = todayKey(); // don't ask again today
   document.querySelector(".overlay")?.remove();
-  launchWorkout(start.workoutId, start.scheduledWorkoutId, { ...checkin, choice });
+  launchWorkout(start.workoutId, start.scheduledWorkoutId, { date: todayKey(), choice, suggested: suggestion.level, reasons: suggestion.reasons });
   applyAdaptation(choice);
   save(); render();
   if (choice !== "normal") toast(choice === "light" ? "Lighter session ready. Your plan is unchanged." : "Adapted workout ready. Your plan is unchanged.");
@@ -632,7 +716,7 @@ function renderHome() {
   if (!workout) return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section><div class="surface empty-state"><h3>Your next chapter starts here</h3><p>Start with a recommended plan, create your own, or import the one you already follow.</p><div class="empty-actions"><button class="primary-button" data-action="use-recommended-plan">USE ${escapeHtml(recommendedPlan().name.toUpperCase())}</button><button class="secondary-button" data-action="create-program">Create my plan</button></div></div>`;
   const isToday = scheduledWorkout.day === todayDay();
   const alternatives = Number(state.program.cycleWeeks) > 1 ? [true] : activeCycleDays().filter((day) => day.id !== scheduledWorkout.id); // other sessions to swap to, or done ones to reopen
-  return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderUndoFinishCard()}${renderCycleCard()}
+  return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>${renderUndoFinishCard()}${renderCycleCard()}${renderWellbeingCard()}
     <div class="section-heading"><h2>${isToday ? "Today's workout" : "Up next"}</h2><button class="link-button" data-tab="Plan">View plan</button></div>
     <section class="today-card"><div class="today-top"><span class="eyebrow">${escapeHtml(scheduledWorkout.day)} · ${isToday ? "Today" : "Coming up"}${alternate ? " · Changed for today" : ""}</span><div class="today-card-actions"><span class="date-chip">${weekdayNames.includes(scheduledWorkout.day) ? prettyDate(keyFromDate(weekdayDate(scheduledWorkout.day)), { month: "short", day: "numeric" }) : "Any day"}</span>${alternatives.length ? `<button class="today-options-button" data-action="change-today-workout" data-scheduled-day-id="${scheduledWorkout.id}" aria-label="More workout options" title="More workout options">${icon("more")}</button>` : ""}</div></div><div class="today-title">${escapeHtml(workout.name)}</div><p class="today-meta">${workout.exercises.length} exercises <span aria-hidden="true">·</span> Approximately ${estimateDuration(workout)} min</p><div class="today-bottom"><div class="avatar-stack"><span class="tiny-dots"><i></i><i></i><i></i></span><span>${escapeHtml(state.program.name)}</span></div><button class="primary-button" data-action="start-workout" data-workout-id="${workout.id}" data-scheduled-workout-id="${scheduledWorkout.id}">${state.activeWorkout?.workoutId === workout.id ? "RESUME WORKOUT" : "START WORKOUT"} ${icon("arrow")}</button></div></section>
     <section class="section"><div class="section-heading"><h2>Today's flow</h2><span class="eyebrow">${workout.exercises.length} moves</span></div><div class="exercise-preview">${workout.exercises.map((exercise, index) => `<button class="exercise-row" data-action="preview-exercise" data-day-id="${workout.id}" data-exercise-id="${exercise.id}" aria-label="Preview ${escapeHtml(exercise.name)}"><span class="exercise-number">${String(index + 1).padStart(2, "0")}</span><span class="exercise-row-main"><span class="exercise-row-name">${escapeHtml(exercise.name)}</span>${exercise.notes ? `<span class="exercise-row-detail">${escapeHtml(exercise.notes)}</span>` : ""}</span><span class="target-pill">${exercise.sets} × ${exercise.reps || "—"}</span></button>`).join("") || `<div class="empty-state"><p>Add exercises to this workout in your plan.</p></div>`}</div></section>
@@ -698,9 +782,7 @@ function activeExerciseFrom(exercise) {
   const count = Math.max(Number(exercise.sets) || 1, previous?.sets?.length || 0);
   return { exerciseId: exercise.id, name: exercise.name, targetSets: Number(exercise.sets) || 1, targetReps: Number(exercise.reps) || 0, rest: Number(exercise.rest) || 0, notes: exercise.notes || "", sets: Array.from({ length: count }, (_, index) => ({ weight: previous?.sets?.[index]?.weight ?? previous?.sets?.at(-1)?.weight ?? "", reps: previous?.sets?.[index]?.reps ?? previous?.sets?.at(-1)?.reps ?? (Number(exercise.reps) || 0), complete: false })) };
 }
-function beginStartFlow(start) {
-  if (menstrual().enabled && cycleAvailable()) showReadinessCheck(start); else launchWorkout(start.workoutId, start.scheduledWorkoutId);
-}
+function beginStartFlow(start) { beginStartFlowChecks(start); }
 function launchWorkout(workoutId, scheduledWorkoutId = workoutId, readiness = null) {
   const workout = state.program.days.find((day) => day.id === workoutId);
   if (!workout) return;
@@ -888,7 +970,9 @@ function finishWorkout() {
   const finished = { id: workout.id, programDayId: workout.dayId, programWeek: workout.programWeek || 1, cycleId: workout.cycleId, name: workout.name, date: workout.date, duration: Math.max(1, Math.round((Date.now() - workout.startedAt) / 60000)), exercises: workout.exercises.map((exercise) => ({ exerciseId: exercise.exerciseId, name: exercise.name, notes: exercise.notes, sets: exercise.sets.filter((set) => set.complete).map(({ weight, reps }) => ({ weight: Number(weight) || 0, reps: Number(reps) || 0 })) })).filter((exercise) => exercise.sets.length) };
   const cycleNow = menstrual().enabled && cycleAvailable() ? cycleInfo(workout.date) : null;
   if (cycleNow) finished.cycle = { day: cycleNow.day, bucket: cycleNow.bucket };
-  if (workout.readiness) finished.readiness = { level: workout.readiness.level, symptoms: workout.readiness.symptoms || [], choice: workout.readiness.choice };
+  if (workout.readiness) finished.readiness = { choice: workout.readiness.choice, suggested: workout.readiness.suggested || "", reasons: workout.readiness.reasons || [] };
+  const wellbeingToday = wellbeingOn() ? wellbeing().logs[workout.date] : null;
+  if (wellbeingComplete(wellbeingToday)) finished.wellbeing = { mood: wellbeingToday.mood, energy: wellbeingToday.energy, stress: wellbeingToday.stress, sleep: wellbeingToday.sleep, symptoms: wellbeingToday.symptoms || [] };
   if (finished.exercises.length) {
     state.history.unshift(finished);
     state.history = state.history.slice(0, 250);
@@ -2154,6 +2238,12 @@ function bindSelects() {
   app.querySelectorAll("[data-change]").forEach((select) => select.addEventListener("change", () => {
     if (select.dataset.change === "units") { state.units = select.value; if (state.units === "lbs" && Number(state.weightStep) === 2.5) state.weightStep = 5; else if (state.units === "kg" && Number(state.weightStep) === 5) state.weightStep = 2.5; }
     if (select.dataset.change === "weight-step") state.weightStep = Number(select.value);
+    if (select.dataset.change === "toggle-wellbeing") { wellbeing().enabled = select.value === "on"; toast(select.value === "on" ? "Wellbeing tracking is on. Check in from Home." : "Wellbeing tracking is off. Your past logs are kept."); }
+    if (select.dataset.change === "toggle-readiness") { state.readinessSuggestions = select.value === "on"; toast(select.value === "on" ? "Readiness suggestions are on. Honna will only suggest; you decide." : "Readiness suggestions are off."); }
+    if (select.dataset.change === "toggle-cycle") {
+      if (select.value === "on") { if (sortedPeriodStarts().length) { menstrual().enabled = true; menstrual().asked = true; } else { save(); render(); showCycleSetup(); return; } }
+      else { menstrual().enabled = false; toast("Cycle tracking is off. Your logged data is kept."); }
+    }
     if (select.dataset.change === "rest-alerts") { if (select.value === "on") { enableRestAlerts().then((on) => { if (on) toast("Rest alerts are on."); render(); }); return; } state.restAlerts = "off"; clearRestNotifications(); }
     if (select.dataset.change === "sex") { const wasOn = state.menstrual?.enabled; setSex(select.value); if (wasOn && !state.menstrual.enabled) toast("Cycle-aware training is off. Your logged data is kept."); }
     if (select.dataset.change === "progress-exercise") progressSelection = select.value;
@@ -2196,22 +2286,20 @@ document.addEventListener("click", (event) => {
   else if (action === "log-period") showLogPeriod();
   else if (action === "save-period") { const value = document.querySelector("#period-start")?.value; if (!value || value > todayKey()) return; addPeriodStart(value); save(); document.querySelector(".overlay")?.remove(); render(); toast("Period logged."); }
   else if (action === "cycle-details") showCycleDetails();
-  else if (action === "toggle-symptom" && pendingWorkoutStart) {
-    const symptoms = new Set(pendingWorkoutStart.symptoms || []);
+  else if (action === "wb-set") { setWellbeingValue(button.dataset.field, Number(button.dataset.value)); save(); if (button.dataset.context === "sheet") showPreWorkoutCheckIn(pendingWorkoutStart); else render(); }
+  else if (action === "wb-symptom") {
+    const log = wellbeing().logs[todayKey()] ||= {};
+    const symptoms = new Set(log.symptoms || []);
     if (symptoms.has(button.dataset.symptom)) symptoms.delete(button.dataset.symptom); else symptoms.add(button.dataset.symptom);
-    showReadinessCheck(pendingWorkoutStart, pendingWorkoutStart.level, [...symptoms]);
+    log.symptoms = [...symptoms]; save();
+    if (button.dataset.context === "sheet") showPreWorkoutCheckIn(pendingWorkoutStart); else render();
   }
-  else if (action === "readiness" && pendingWorkoutStart) {
-    pendingWorkoutStart.level = button.dataset.level;
-    if (button.dataset.level === "good") beginCheckedWorkout("normal"); else showAdaptationOffer(button.dataset.level);
-  }
+  else if (action === "wb-symptoms-open") { wellbeingSymptomsOpen = true; if (button.dataset.context === "sheet") showPreWorkoutCheckIn(pendingWorkoutStart); else render(); }
+  else if (action === "wb-edit") { wellbeingEditing = true; render(); }
+  else if (action === "wb-skip") { wellbeing().skipped = todayKey(); wellbeingEditing = false; save(); render(); }
+  else if (action === "prestart-skip" && pendingWorkoutStart) { wellbeing().skipped = todayKey(); save(); showReadinessSuggestion(pendingWorkoutStart); }
+  else if (action === "prestart-continue" && pendingWorkoutStart) showReadinessSuggestion(pendingWorkoutStart);
   else if (action === "adapt-choice") beginCheckedWorkout(button.dataset.choice);
-  else if (action === "insight-yes" && pendingWorkoutStart) { pendingWorkoutStart.level = "unrated"; beginCheckedWorkout("adapted"); }
-  else if (action === "insight-no" && pendingWorkoutStart) {
-    const suggestion = todaysCycleSuggestion();
-    if (suggestion) { menstrual().dismissedInsights[`${suggestion.id}:${cycleInfo().start}`] = true; save(); }
-    showReadinessCheck(pendingWorkoutStart, null, pendingWorkoutStart.symptoms || []);
-  }
   else if (action === "cycle-onboarding-yes") { finishOnboarding(); showCycleSetup(); }
   else if (action === "cycle-onboarding-no") { menstrual().asked = true; finishOnboarding(); }
   else if (action === "change-today-workout") showWorkoutDayPicker(button.dataset.scheduledDayId);
