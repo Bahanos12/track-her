@@ -615,10 +615,10 @@ function wellbeingOn() { return wellbeing().enabled === true; }
 function readinessOn() { return (state.readinessSuggestions ?? Boolean(state.menstrual?.enabled)) === true; }
 function cycleTrackingOn() { return menstrual().enabled && cycleAvailable(); }
 const wellbeingFields = [
-  { key: "mood", label: "Mood", low: "Low", high: "Great", faces: ["😞", "🙁", "😐", "🙂", "😄"] },
-  { key: "energy", label: "Energy", low: "Drained", high: "Energised" },
-  { key: "stress", label: "Stress", low: "Calm", high: "Very stressed" },
-  { key: "sleep", label: "Sleep", low: "Poor", high: "Great" },
+  { key: "mood", label: "Mood", words: ["Low", "Down", "Okay", "Good", "Great"], faces: ["😞", "🙁", "😐", "🙂", "😄"] },
+  { key: "energy", label: "Energy", words: ["Drained", "Low", "Okay", "Good", "Energised"] },
+  { key: "stress", label: "Stress", words: ["Calm", "Low", "Moderate", "High", "Very high"] },
+  { key: "sleep", label: "Sleep", words: ["Poor", "Light", "Okay", "Good", "Great"] },
 ];
 function wellbeingSymptomOptions() { return symptomOptions.filter((symptom) => cycleAvailable() || !["Cramps", "Bloating"].includes(symptom)); }
 function todaysWellbeing() { return wellbeing().logs[todayKey()] || null; }
@@ -637,15 +637,24 @@ function dailySignals() {
 }
 let wellbeingEditing = false, wellbeingSymptomsOpen = false;
 function renderWellbeingForm(log, context) {
-  const scale = (field) => `<div class="wb-row"><span class="wb-label">${field.label}</span><div class="wb-scale" role="radiogroup" aria-label="${field.label}">${[1, 2, 3, 4, 5].map((value) => `<button class="wb-dot${Number(log?.[field.key]) === value ? " selected" : ""}" data-action="wb-set" data-field="${field.key}" data-value="${value}" data-context="${context}" role="radio" aria-checked="${Number(log?.[field.key]) === value}" aria-label="${field.label} ${value} of 5">${field.faces ? field.faces[value - 1] : value}</button>`).join("")}</div><span class="wb-ends"><small>${field.low}</small><small>${field.high}</small></span></div>`;
+  // Mood: tap a face. Energy, stress, sleep: a 5-step bar that fills up to the chosen level. The chosen word shows on the right.
+  const scale = (field) => {
+    const current = Number(log?.[field.key]) || 0;
+    const buttons = [1, 2, 3, 4, 5].map((value) => `<button class="${field.faces ? "wb-face" : "wb-seg"}${value === current ? " selected" : ""}${!field.faces && value <= current ? " on" : ""}" data-action="wb-set" data-field="${field.key}" data-value="${value}" data-context="${context}" role="radio" aria-checked="${value === current}" aria-label="${field.label}: ${field.words[value - 1]} (${value} of 5)">${field.faces ? field.faces[value - 1] : ""}</button>`).join("");
+    return `<div class="wb-row"><div class="wb-row-head"><span class="wb-label">${field.label}</span><span class="wb-value${current ? "" : " unset"}">${current ? field.words[current - 1] : "Tap to rate"}</span></div><div class="wb-scale ${field.faces ? "wb-faces" : "wb-meter"}" role="radiogroup" aria-label="${field.label}">${buttons}</div></div>`;
+  };
   const symptoms = log?.symptoms || [];
   const chips = wellbeingSymptomOptions().map((symptom) => `<button class="symptom-chip${symptoms.includes(symptom) ? " selected" : ""}" data-action="wb-symptom" data-symptom="${symptom}" data-context="${context}" aria-pressed="${symptoms.includes(symptom)}">${symptom}</button>`).join("");
   const open = wellbeingSymptomsOpen || symptoms.length > 0;
   return `<div class="wb-form">${wellbeingFields.map(scale).join("")}${open ? `<div class="field-label" style="margin-top:8px">Symptoms <small>(optional)</small></div><div class="symptom-chips">${chips}</div>` : `<button class="link-button wb-more" data-action="wb-symptoms-open" data-context="${context}">+ Symptoms (optional)</button>`}</div>`;
 }
-function wellbeingSummary(log) {
-  const parts = wellbeingFields.map((field) => `${field.label} ${field.faces ? field.faces[log[field.key] - 1] : `${log[field.key]}/5`}`);
-  return parts.join(" · ") + (log.symptoms?.length ? ` · ${log.symptoms.join(", ")}` : "");
+function wellbeingChips(log) {
+  const chips = wellbeingFields.map((field) => {
+    const word = field.words[log[field.key] - 1];
+    return field.faces ? `<span class="wb-chip"><span aria-hidden="true">${field.faces[log[field.key] - 1]}</span>${word} mood</span>` : `<span class="wb-chip">${field.label} <b>${word.toLowerCase()}</b></span>`;
+  });
+  for (const symptom of log.symptoms || []) chips.push(`<span class="wb-chip wb-chip-symptom">${escapeHtml(symptom)}</span>`);
+  return `<div class="wb-chips">${chips.join("")}</div>`;
 }
 const suggestionCopy = { keep: "Looks like a good day for your planned workout.", adapted: "Consider reducing intensity today.", light: "A lighter session might suit you today." };
 function renderWellbeingCard() {
@@ -655,7 +664,8 @@ function renderWellbeingCard() {
   if (wellbeingComplete(log) && !wellbeingEditing) {
     const suggestion = readinessOn() ? readinessSuggestion() : null;
     const tip = suggestion ? todaysAdvice(suggestion)[0] : null;
-    return `<section class="cycle-card wb-card wb-done"><div><strong>Today's check-in</strong><small>${escapeHtml(wellbeingSummary(log))}</small>${suggestion ? `<small class="wb-suggestion">${suggestionCopy[suggestion.level]}</small>` : ""}${tip ? `<small class="wb-tip">${escapeHtml(tip.text)} <button class="link-button" data-action="research-library">Sources</button></small>` : ""}</div><button class="secondary-button cycle-log" data-action="wb-edit">Edit</button></section>`;
+    const advice = suggestion ? `<div class="wb-advice wb-advice-${suggestion.level}"><strong>${suggestionCopy[suggestion.level]}</strong>${tip ? `<p class="wb-tip">${escapeHtml(tip.text)} <button class="link-button" data-action="research-library">Sources</button></p>` : ""}</div>` : "";
+    return `<section class="cycle-card wb-card wb-done"><div class="wb-head"><strong>Today's check-in</strong><button class="link-button" data-action="wb-edit">Edit</button></div>${wellbeingChips(log)}${advice}</section>`;
   }
   if (skippedToday && !wellbeingEditing) return "";
   return `<section class="cycle-card wb-card"><div class="wb-head"><strong>How are you today?</strong><button class="link-button" data-action="wb-skip">Not today</button></div>${renderWellbeingForm(log, "card")}</section>`;
