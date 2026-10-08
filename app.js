@@ -131,7 +131,7 @@ async function initializeState() {
     }
     await writeIndexedState(JSON.stringify(state));
   } catch { }
-  render();
+  if (!closeStaleWorkout()) render();
   if (state.activeWorkout?.restEndsAt) runRestTicker(); // resume a rest timer after the app was reloaded
   navigator.storage?.persist?.().catch(() => { });
 }
@@ -656,7 +656,7 @@ function wellbeingChips(log) {
   for (const symptom of log.symptoms || []) chips.push(`<span class="wb-chip wb-chip-symptom">${escapeHtml(symptom)}</span>`);
   return `<div class="wb-chips">${chips.join("")}</div>`;
 }
-const suggestionCopy = { keep: "Looks like a good day for your planned workout.", adapted: "Consider reducing intensity today.", light: "A lighter session might suit you today." };
+const suggestionCopy = { keep: "Looks like a good day for your planned workout.", adapted: "Consider reducing intensity today.", light: "A lighter session might suit you today.", none: "Heavy flow or period pain today. Train as planned, go lighter or rest: it's your call." };
 function renderWellbeingCard() {
   if (!wellbeingOn()) return "";
   const log = todaysWellbeing();
@@ -698,6 +698,8 @@ function readinessSuggestion() {
   }
   const pattern = cycleTrackingOn() ? todaysCycleSuggestion() : null;
   if (pattern) { score += 2; reasons.push(pattern.text.replace(/\.$/, "").replace(/^You /, "you ").replace(/^Your /, "your ")); }
+  // Heavy flow or period pain: no option is suggested, the person decides (rest is offered too).
+  if (restDayOffered()) return { level: "none", score, reasons, pattern };
   const level = score >= 4 ? "light" : score >= 2 ? "adapted" : "keep";
   return { level, score, reasons, pattern };
 }
@@ -762,9 +764,7 @@ function restDayOffered() {
   const symptoms = wellbeingOn() ? todaysWellbeing()?.symptoms || [] : [];
   return flow === "heavy" || symptoms.includes("Cramps");
 }
-function suggestionHeadline(suggestion) {
-  return suggestion.level === "keep" && restDayOffered() ? "Train if you feel up to it, or rest today." : suggestionCopy[suggestion.level];
-}
+function suggestionHeadline(suggestion) { return suggestionCopy[suggestion.level]; }
 function restToday() {
   pendingWorkoutStart = null;
   document.querySelector(".overlay")?.remove();
@@ -799,7 +799,7 @@ function showReadinessSuggestion(start) {
   pendingWorkoutStart = start;
   const suggestion = readinessSuggestion();
   const offerRest = restDayOffered();
-  if ((suggestion.level === "keep" && !offerRest) || state.readinessDeclined === todayKey()) { beginCheckedWorkout("normal", suggestion); return; }
+  if (suggestion.level === "keep" || state.readinessDeclined === todayKey()) { beginCheckedWorkout("normal", suggestion); return; }
   const why = suggestion.reasons.length ? `Based on ${suggestion.reasons.join("; ")}.` : "";
   const option = (choice, title, detail) => `<button class="readiness-option${choice === suggestion.level ? " selected" : ""}" data-action="adapt-choice" data-choice="${choice === "keep" ? "normal" : choice}"><span><strong>${title}${choice === suggestion.level ? " · suggested" : ""}</strong><small>${detail}</small></span></button>`;
   const advice = todaysAdvice(suggestion);
@@ -830,7 +830,7 @@ function beginCheckedWorkout(choice, suggestion = readinessSuggestion()) {
   const start = pendingWorkoutStart;
   if (!start) return;
   pendingWorkoutStart = null;
-  if (choice === "normal" && suggestion.level !== "keep") state.readinessDeclined = todayKey(); // don't ask again today
+  if (choice === "normal" && !["keep", "none"].includes(suggestion.level)) state.readinessDeclined = todayKey(); // don't ask again today
   document.querySelector(".overlay")?.remove();
   launchWorkout(start.workoutId, start.scheduledWorkoutId, { date: todayKey(), choice, suggested: suggestion.level, reasons: suggestion.reasons });
   applyAdaptation(choice);
@@ -870,6 +870,34 @@ function resumeWorkout() {
   save(); document.querySelector(".overlay")?.remove(); render();
   if (state.activeWorkout.restEndsAt) runRestTicker();
 }
+// A workout left untouched for 3 hours (no set ticked since it started, or since the last ticked set):
+// nothing ticked → it closes and the same workout waits on Home to be started again;
+// every set ticked → it's saved as finished; partly ticked → it stays open until Finish.
+const staleWorkoutMs = 3 * 60 * 60 * 1000;
+function closeStaleWorkout() {
+  const workout = state.activeWorkout;
+  if (!workout) return false;
+  const lastActivity = Number(workout.lastLoggedAt) || Number(workout.startedAt) || 0;
+  if (!lastActivity || Date.now() - lastActivity < staleWorkoutMs) return false;
+  const sets = workout.exercises.flatMap((exercise) => exercise.sets);
+  const ticked = sets.filter((set) => set.complete).length;
+  if (ticked === 0) {
+    state.activeWorkout = null; state.workoutPaused = false; state.activeTab = "Home";
+    clearInterval(restInterval); restInterval = null;
+    document.querySelector(".overlay")?.remove();
+    save(); render();
+    toast(`${escapeHtml(workout.name)} was closed after 3 hours with nothing logged. Start it again when you're ready.`);
+    return true;
+  }
+  if (sets.length && ticked === sets.length) {
+    document.querySelector(".overlay")?.remove();
+    finishWorkout(lastActivity);
+    return true;
+  }
+  return false;
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") closeStaleWorkout(); });
+setInterval(closeStaleWorkout, 60 * 1000);
 function discardWorkout() {
   state.activeWorkout = null; state.workoutPaused = false; state.todayWorkoutOverride = null; state.activeTab = "Home";
   clearInterval(restInterval); restInterval = null;
@@ -1120,6 +1148,7 @@ function completeSet(exerciseIndex, setIndex) {
   const exercise = state.activeWorkout.exercises[exerciseIndex];
   const set = exercise.sets[setIndex];
   set.complete = !set.complete;
+  if (set.complete) state.activeWorkout.lastLoggedAt = Date.now();
   if (set.complete && Number(exercise.rest) > 0) { beginRest(Number(exercise.rest)); return; }
   if (!set.complete) state.activeWorkout.restEndsAt = null;
   save(); render();
@@ -1157,6 +1186,7 @@ function reopenWorkout(historyId, resume = true) {
       exercises: entry.exercises.map((exercise) => ({ exerciseId: exercise.exerciseId, name: exercise.name, targetSets: exercise.sets.length, targetReps: Number(exercise.sets[0]?.reps) || 0, rest: Number(getExercise(exercise.exerciseId, exercise.name)?.rest) || 0, notes: exercise.notes || "", sets: exercise.sets.map((set) => ({ ...set, complete: true })) })),
     };
     if (entry.readiness && !workout.readiness) workout.readiness = entry.readiness;
+    workout.lastLoggedAt = Date.now(); // a reopened workout gets a fresh 3 hours
     state.activeWorkout = workout;
     state.workoutPaused = false;
     state.todayWorkoutOverride = snapshot?.override || null;
@@ -1172,7 +1202,7 @@ function confirmReopen(historyId, resume) {
   if (resume) showSheet(`Reopen ${entry.name}?`, `From ${when}. It leaves your history until you finish it again, and your plan goes back to before you finished it.`, "", `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="confirm-reopen" data-history-id="${historyId}" data-resume="1">REOPEN</button>`);
   else showSheet(`Remove ${entry.name}?`, `From ${when}. Its logged sets are deleted and the session counts as not done.`, "", `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="danger-button" data-action="confirm-reopen" data-history-id="${historyId}" data-resume="0">REMOVE</button>`);
 }
-function finishWorkout() {
+function finishWorkout(endedAt = Date.now()) {
   const workout = state.activeWorkout;
   if (!workout) return;
   // Everything finishing changes, so "Reopen" can put it back exactly (taken before any auto-fill).
@@ -1183,7 +1213,7 @@ function finishWorkout() {
   // Finishing without ticking anything means "I did it as planned": log every set with the usual numbers.
   const quickFinish = !workout.exercises.some((exercise) => exercise.sets.some((set) => set.complete));
   if (quickFinish) workout.exercises.forEach(fillAndCompleteSets);
-  const finished = { id: workout.id, programDayId: workout.dayId, programWeek: workout.programWeek || 1, cycleId: workout.cycleId, name: workout.name, date: workout.date, duration: Math.max(1, Math.round((Date.now() - workout.startedAt) / 60000)), exercises: workout.exercises.map((exercise) => ({ exerciseId: exercise.exerciseId, name: exercise.name, notes: exercise.notes, sets: exercise.sets.filter((set) => set.complete).map(({ weight, reps }) => ({ weight: Number(weight) || 0, reps: Number(reps) || 0 })) })).filter((exercise) => exercise.sets.length) };
+  const finished = { id: workout.id, programDayId: workout.dayId, programWeek: workout.programWeek || 1, cycleId: workout.cycleId, name: workout.name, date: workout.date, duration: Math.max(1, Math.round((endedAt - workout.startedAt) / 60000)), exercises: workout.exercises.map((exercise) => ({ exerciseId: exercise.exerciseId, name: exercise.name, notes: exercise.notes, sets: exercise.sets.filter((set) => set.complete).map(({ weight, reps }) => ({ weight: Number(weight) || 0, reps: Number(reps) || 0 })) })).filter((exercise) => exercise.sets.length) };
   const cycleNow = menstrual().enabled && cycleAvailable() ? cycleInfo(workout.date) : null;
   if (cycleNow) finished.cycle = { day: cycleNow.day, bucket: cycleNow.bucket };
   if (workout.readiness) finished.readiness = { choice: workout.readiness.choice, suggested: workout.readiness.suggested || "", reasons: workout.readiness.reasons || [] };
@@ -2427,6 +2457,7 @@ function fillAndCompleteSets(exercise) {
 }
 function completeAllSets(exerciseIndex) {
   const { source, previous } = fillAndCompleteSets(state.activeWorkout.exercises[exerciseIndex]);
+  state.activeWorkout.lastLoggedAt = Date.now();
   state.activeWorkout.restEndsAt = null; clearInterval(restInterval); restInterval = null;
   save(); render();
   toast(source ? `All sets done · ${escapeHtml(source.weight === "" ? "—" : source.weight)} ${state.units} × ${escapeHtml(source.reps)}` : previous ? "All sets done with last session's numbers." : "All sets done.");
