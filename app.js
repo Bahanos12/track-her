@@ -884,22 +884,31 @@ function healthAppsForDevice() {
 }
 function connectedHealthApp() { const source = activity().source; return source in healthApps ? source : ""; }
 let healthSyncing = false;
-async function syncHealthData() {
+// Every sync records what happened (days found, or the error) so the Activity tab can say so plainly.
+async function syncHealthData(announce = false) {
   const bridge = healthBridge(), data = activity(), source = connectedHealthApp();
   if (!data.enabled || !bridge || !source || bridge.platform !== source || healthSyncing) return;
   healthSyncing = true;
   try {
     const totals = await bridge.getDailyTotals({ start: addDays(todayKey(), -60), end: todayKey() });
+    let found = 0;
     for (const day of Array.isArray(totals) ? totals : []) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(day?.date || "") || day.date > todayKey()) continue;
       const meters = Number(day.distanceMeters);
       data.days[day.date] = { steps: Math.max(0, Math.round(Number(day.steps) || 0)), distanceKm: meters > 0 ? Math.round(meters / 10) / 100 : null, source, updatedAt: Date.now() };
+      found += 1;
     }
     data.lastSync = Date.now();
-    save();
-    if (state.activeTab === "Activity" && !workoutOpen() && !document.querySelector(".overlay")) render();
-  } catch { /* keep the last synced numbers; nothing is invented */ }
+    data.syncStatus = { at: Date.now(), days: found, error: "" };
+    if (announce) toast(found ? `Synced steps for ${found} ${found === 1 ? "day" : "days"}.` : `${healthApps[source].name} has no steps for the last 60 days yet.`);
+  } catch (error) {
+    // Keep the last synced numbers; nothing is invented.
+    data.syncStatus = { at: Date.now(), days: 0, error: String(error?.message || error || "Unknown error").slice(0, 160) };
+    if (announce) toast(`Sync failed: ${escapeHtml(data.syncStatus.error)}`);
+  }
+  save();
   healthSyncing = false;
+  if (state.activeTab === "Activity" && !workoutOpen() && !document.querySelector(".overlay")) render();
 }
 async function connectHealthApp(app) {
   const bridge = healthBridge();
@@ -1018,6 +1027,13 @@ function renderActivityHistory() {
   }).join("");
   return `<section class="section"><div class="section-heading"><h2>History</h2></div><div class="act-seg" role="group" aria-label="History period">${tabs}</div><div class="act-list">${list}</div></section>`;
 }
+function syncLine(data) {
+  const status = data.syncStatus;
+  const time = (at) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (!status) return data.lastSync ? `Last synced ${time(data.lastSync)}` : "Waiting for the first sync";
+  if (status.error) return `Last sync failed at ${time(status.at)}: ${escapeHtml(status.error)}`;
+  return status.days ? `Last synced ${time(status.at)} · steps found for ${status.days} ${status.days === 1 ? "day" : "days"}` : `Last synced ${time(status.at)} · no steps found yet. Check that Samsung Health shares Steps with Health Connect.`;
+}
 function renderActivity() {
   const data = activity();
   const intro = `<section class="page-intro"><div class="eyebrow">Steps & distance</div><h1>Activity</h1><p>How much you move, day by day.</p></section>`;
@@ -1039,7 +1055,7 @@ function renderActivity() {
   const editable = !data.demo && !app;
   const ringCard = `<section class="act-card act-today"><div class="act-today-head"><span class="eyebrow">Today</span>${editable ? `<button class="link-button" data-action="activity-add" data-date="${today}">${day ? "Edit" : "+ Add steps"}</button>` : ""}</div>${renderActivityRing(steps, goal)}<p class="act-status">${status}</p>${stats}</section>`;
   const sourceCard = app
-    ? `<section class="act-card act-source"><div><strong>Connected to ${healthApps[app].name}</strong><small>${data.lastSync ? `Last synced ${new Date(data.lastSync).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Waiting for the first sync"}</small></div><button class="secondary-button" data-action="activity-connect" data-app="${app}">Manage</button></section>`
+    ? `<section class="act-card act-source"><div><strong>Connected to ${healthApps[app].name}</strong><small>${syncLine(data)}</small></div><div class="act-source-actions"><button class="secondary-button" data-action="activity-sync">Sync now</button><button class="secondary-button" data-action="activity-connect" data-app="${app}">Manage</button></div></section>`
     : `<section class="act-card act-source"><div><strong>Connect your health app</strong><small>Bring in steps from your phone and watch automatically.</small></div><div class="act-connect">${healthAppsForDevice().map((key) => `<button class="secondary-button" data-action="activity-connect" data-app="${key}">${healthApps[key].connect}</button>`).join("")}</div></section>`;
   const select = (change, on, label) => `<select class="select-field" data-change="${change}" aria-label="${label}"><option value="on" ${on ? "selected" : ""}>On</option><option value="off" ${on ? "" : "selected"}>Off</option></select>`;
   const settings = `<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Activity settings</div><div class="setting-row"><div><strong>Daily step goal</strong><small>${formatSteps(goal)} steps</small></div><button class="link-button" data-action="activity-goal">Change ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Goal celebration</strong><small>A small celebration when you reach your goal</small></div>${select("act-celebrate", data.celebrate, "Goal celebration")}</div><div class="setting-row"><div><strong>Step streak</strong><small>Days in a row at your goal</small></div>${select("act-streak", data.streak, "Step streak")}</div><div class="setting-row"><div><strong>Demo mode</strong><small>Sample numbers, clearly labelled, never saved</small></div>${select("act-demo", data.demo, "Demo mode")}</div><div class="setting-row"><div><strong>Activity tracking</strong><small>Turning it off keeps what's saved</small></div>${select("act-enabled", true, "Activity tracking")}</div></section>`;
@@ -2826,7 +2842,7 @@ document.addEventListener("click", (event) => {
   else if (action === "activity-connect") showHealthApp(button.dataset.app);
   else if (action === "activity-connect-go") connectHealthApp(button.dataset.app);
   else if (action === "activity-disconnect") disconnectHealthApp();
-  else if (action === "activity-sync") { document.querySelector(".overlay")?.remove(); syncHealthData(); }
+  else if (action === "activity-sync") { document.querySelector(".overlay")?.remove(); toast("Syncing…"); syncHealthData(true); }
   else if (action === "activity-permissions") { try { healthBridge()?.openSettings?.(); } catch { } }
   else if (action === "activity-add") { document.querySelector(".overlay")?.remove(); if (activity().demo) { toast("Turn off demo mode to add your own steps."); return; } showActivityEntry(button.dataset.date || todayKey()); }
   else if (action === "activity-save-entry") saveActivityEntry();

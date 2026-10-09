@@ -270,3 +270,4 @@ button.exercise-row { width: 100%; border-width: 0 0 1px; border-style: solid; b
 #app.app-shell { padding-top: var(--safe-top); }
 body::before { content: ""; position: fixed; z-index: 40; top: 0; left: 0; right: 0; height: var(--safe-top); background: var(--paper); pointer-events: none; }
 .overlay { padding-top: calc(16px + var(--safe-top)); }
+.act-source-actions { display: flex; flex-wrap: wrap; gap: 8px; }
