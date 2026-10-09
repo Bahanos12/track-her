@@ -1055,7 +1055,7 @@ function maybeCelebrateSteps() {
 function showActivityEntry(date = todayKey()) {
   const day = activity().days[date];
   const title = date === todayKey() ? "Today's steps" : "Steps";
-  showSheet(title, "Add the numbers from your phone, watch or health app.", `<label class="field"><span class="field-label">Day</span><input class="text-field" type="date" id="act-date" max="${todayKey()}" value="${date}"></label><div class="counter-row"><label class="field"><span class="field-label">Steps</span><input class="number-field" type="number" id="act-steps" min="0" max="200000" inputmode="numeric" placeholder="e.g. 7500" value="${day ? day.steps : ""}"></label><label class="field"><span class="field-label">Distance (km) <small>optional</small></span><input class="number-field" type="number" id="act-km" min="0" max="300" step="0.1" inputmode="decimal" placeholder="e.g. 5.2" value="${day?.distanceKm ?? ""}"></label></div>`, `${day ? `<button class="danger-button" data-action="activity-delete-entry" data-date="${date}">Delete</button>` : `<button class="secondary-button" data-action="close-sheet">Cancel</button>`}<button class="primary-button" data-action="activity-save-entry">SAVE</button>`);
+  showSheet(title, "Add the numbers from your phone, watch or health app.", `<label class="field"><span class="field-label">Day</span><input class="text-field" type="date" id="act-date" max="${todayKey()}" value="${date}"></label><div class="counter-row"><label class="field"><span class="field-label">Steps</span><input class="number-field" type="number" id="act-steps" min="0" max="200000" inputmode="numeric" placeholder="e.g. 7500" value="${day ? day.steps : ""}"></label><label class="field"><span class="field-label">Distance (km) <small>optional</small></span><input class="number-field" type="text" id="act-km" inputmode="decimal" autocomplete="off" placeholder="e.g. 5.2" value="${day?.distanceKm ?? ""}"></label></div>`, `${day ? `<button class="danger-button" data-action="activity-delete-entry" data-date="${date}">Delete</button>` : `<button class="secondary-button" data-action="close-sheet">Cancel</button>`}<button class="primary-button" data-action="activity-save-entry">SAVE</button>`);
   // Picking another day shows what's already saved for it.
   document.querySelector("#act-date")?.addEventListener("change", (event) => {
     const saved = activity().days[event.target.value];
@@ -1070,7 +1070,7 @@ function saveActivityEntry() {
   const kmRaw = document.querySelector("#act-km")?.value.trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "") || date > todayKey()) { document.querySelector("#act-date")?.focus(); toast("Pick a day up to today."); return; }
   if (!Number.isFinite(steps) || steps < 0 || steps > 200000 || document.querySelector("#act-steps").value.trim() === "") { document.querySelector("#act-steps").focus(); toast("Add a step count between 0 and 200,000."); return; }
-  const km = kmRaw === "" ? null : Number(kmRaw);
+  const km = kmRaw === "" ? null : /^\d+([.,]\d+)?$/.test(kmRaw) ? Number(kmRaw.replace(",", ".")) : NaN;
   if (km !== null && (!Number.isFinite(km) || km < 0 || km > 300)) { document.querySelector("#act-km").focus(); toast("Distance should be between 0 and 300 km."); return; }
   activity().days[date] = { steps: Math.round(steps), distanceKm: km === null ? null : Math.round(km * 100) / 100, source: "manual", updatedAt: Date.now() };
   save(); document.querySelector(".overlay")?.remove(); render();

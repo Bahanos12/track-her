@@ -1,4 +1,4 @@
-const CACHE_NAME = "track-her-shell-v39";
+const CACHE_NAME = "track-her-shell-v40";
 const APP_SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon-maskable-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-48.png", "./fonts/fonts.css", "./fonts/dm-sans-latin.woff2", "./fonts/dm-sans-latin-ext.woff2", "./fonts/manrope-latin.woff2", "./fonts/manrope-latin-ext.woff2"];
 
 self.addEventListener("install", (event) => {
