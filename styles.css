@@ -263,3 +263,4 @@ button.exercise-row { width: 100%; border-width: 0 0 1px; border-style: solid; b
 .act-source { display: grid; gap: 10px; }.act-source strong { display: block; font-size: 14px; }.act-source small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }.act-connect { display: grid; gap: 8px; }.act-source > .secondary-button { justify-self: start; }
 .act-goal-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }.act-goal-options .theme-option { justify-content: center; min-height: 42px; font-weight: 700; }
 .privacy-note { margin: 0 0 22px; color: var(--muted); font-size: 12px; text-align: center; }.privacy-note a { color: var(--sage-dark); font-weight: 700; }
+#app.app-shell { min-height: calc(100dvh + var(--start-room, 0px)); }

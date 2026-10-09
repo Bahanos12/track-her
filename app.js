@@ -22,6 +22,8 @@ const iconPaths = {
 };
 const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name] || ""}</svg>`;
 const uid = () => Math.random().toString(36).slice(2, 10);
+// Running inside the installed Android/iOS app (Capacitor) rather than a browser: files are bundled, no install prompt.
+const nativeApp = Boolean(window.Capacitor?.isNativePlatform?.());
 const todayKey = () => {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -1090,7 +1092,33 @@ function setActivityGoal(value) {
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncHealthData(); });
 // A workout in progress is either open (full screen) or paused while you look around the app.
 function workoutOpen() { return Boolean(state.activeWorkout) && !state.workoutPaused; }
+// Each screen has its own starting position, used whenever you switch to it: just below the Honna top bar, so the
+// screen's own heading (e.g. "Your training, in rhythm") is the first thing you see. The open workout starts at its top.
+// Re-rendering the same screen (ticking a set, changing a setting) keeps your place.
+if ("scrollRestoration" in history) history.scrollRestoration = "manual"; // the Back-button history must not restore old positions
+let lastRenderedView = null;
+function scrollToScreenStart() {
+  const topbar = app.querySelector(".topbar");
+  let start = 0;
+  if (topbar) {
+    const barEnd = topbar.getBoundingClientRect().bottom + window.scrollY;
+    const heading = topbar.nextElementSibling?.querySelector(".eyebrow, h1");
+    // The heading lands 24px from the top on every screen; only the bar's empty bottom padding may stay in view.
+    start = heading ? heading.getBoundingClientRect().top + window.scrollY - 24 : barEnd;
+    start = Math.round(Math.max(0, barEnd - 12, Math.min(start, barEnd)));
+  }
+  // Always leave room to scroll that far, so a short screen never shows the top bar half cut off.
+  app.style.setProperty("--start-room", `${start}px`);
+  window.scrollTo(0, start);
+}
 function render() {
+  const view = !state.onboarded ? "onboarding" : workoutOpen() ? "workout" : state.activeTab;
+  const viewChanged = view !== lastRenderedView;
+  lastRenderedView = view;
+  renderView();
+  if (viewChanged) scrollToScreenStart();
+}
+function renderView() {
   applyTheme();
   if (!state.onboarded) return renderOnboarding();
   if (workoutOpen()) { app.innerHTML = renderWorkout(); syncBackHistory(); return; }
@@ -1265,7 +1293,7 @@ function renderChart(records) {
   return `<div class="chart-area"><svg viewBox="0 0 310 180" role="img" aria-label="Weight progression chart">${[35, 80, 125, 160].map((y) => `<line class="chart-grid" x1="26" y1="${y}" x2="304" y2="${y}"/>`).join("")}<path class="chart-line" d="${path}"/>${coords.map(({ x, y, point }) => `<circle class="chart-point" cx="${x}" cy="${y}" r="4"><title>${point.weight} ${state.units} on ${prettyDate(point.date)}</title></circle>`).join("")}${coords.filter((_, i) => i === 0 || i === coords.length - 1).map(({ x, point }) => `<text class="chart-label" x="${x}" y="176" text-anchor="middle">${prettyDate(point.date)}</text>`).join("")}</svg></div><div class="eyebrow" style="text-align:right">Best set weight · ${state.units}</div>`;
 }
 function renderProfile() {
-  const standalone = window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
+  const standalone = nativeApp || window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
   return `<section class="page-intro profile-intro"><div class="profile-avatar">${escapeHtml((state.name || "H").slice(0, 1).toUpperCase())}</div><div class="profile-intro-text"><div class="eyebrow">Made for your pace</div><button class="profile-name" data-action="edit-name" aria-label="Edit your name"><h1>${escapeHtml(state.name || "Add your name")}</h1><span class="edit-hint" aria-hidden="true">${icon("edit")}</span></button><p>${escapeHtml(state.program.name)}</p></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>About you</strong><small>Shapes recommendations and features</small></div><select class="select-field" data-change="sex" aria-label="About you"><option value="" ${userSex() ? "" : "selected"} disabled>Choose</option>${sexOptions.map(([value, label]) => `<option value="${value}" ${userSex() === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div>${notificationsSupported() ? `<div class="setting-row"><div><strong>Rest timer alerts</strong><small>${state.restAlerts === "on" && Notification.permission !== "granted" ? "Blocked in browser settings" : "Notify when you leave the app during a rest"}</small></div><select class="select-field" data-change="rest-alerts" aria-label="Rest timer alerts"><option value="on" ${restAlertsOn() ? "selected" : ""}>On</option><option value="off" ${restAlertsOn() ? "" : "selected"}>Off</option></select></div>` : ""}<div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section>${renderCycleSettings()}<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Honna</button>`}</section><p class="eyebrow" style="margin:22px 0 6px;text-align:center">Honna · Your workouts, in rhythm</p><p class="privacy-note">Your data stays on this device. <a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a></p>`;
 }
 function renderOnboarding() {
@@ -1344,7 +1372,7 @@ function beginRest(seconds) {
 // when you leave, and a "Rest is up" alert at the end (best effort: the phone may pause a backgrounded app).
 const restAlertTag = "honna-rest";
 let restAlertTimer = null;
-function notificationsSupported() { return "Notification" in window && "serviceWorker" in navigator; }
+function notificationsSupported() { return !nativeApp && "Notification" in window && "serviceWorker" in navigator; }
 function restAlertsOn() { return notificationsSupported() && state.restAlerts === "on" && Notification.permission === "granted"; }
 // Asked once, inside the rest bar (never a pop-up over the workout).
 function shouldAskRestAlerts() { return notificationsSupported() && !state.restAlerts && Notification.permission !== "denied"; }
@@ -2946,7 +2974,7 @@ window.addEventListener("beforeinstallprompt", (event) => {
 window.addEventListener("appinstalled", () => { installPrompt = null; if (state.activeTab === "Profile") render(); });
 // Updates: check for a new version when the app opens or comes back to the front, and switch to it as soon as
 // nothing is in the middle of being edited (saved data is kept; a workout in progress resumes where it was).
-if ("serviceWorker" in navigator) {
+if ("serviceWorker" in navigator && !nativeApp) {
   const hadController = Boolean(navigator.serviceWorker.controller);
   let updateWaiting = false;
   const applyUpdate = () => { if (updateWaiting && !document.querySelector(".overlay")) location.reload(); };
