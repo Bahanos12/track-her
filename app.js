@@ -18,6 +18,7 @@ const iconPaths = {
   swap: '<path d="m16 3 4 4-4 4M20 7H4m4 14-4-4 4-4m-4 4h16"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2m-10 0 1 14h10l1-14M10 11v5m4-5v5"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  activity: '<path d="M6 21c-1.7 0-2.5-1.3-2.5-3.2C3.5 14.5 4.6 11 6.6 11c1.6 0 2.3 1.9 2.3 4.4S8.2 21 6 21Z"/><path d="M15.5 13c-1.7 0-2.5-1.3-2.5-3.2C13 6.5 14.1 3 16.1 3c1.6 0 2.3 1.9 2.3 4.4S17.7 13 15.5 13Z"/><path d="M4.2 17.5h4.3M13.7 9.5H18"/>',
 };
 const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name] || ""}</svg>`;
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -43,6 +44,9 @@ const defaultState = () => ({
   // Optional cycle-aware training. "asked" records that the opt-in question was answered.
   wellbeing: { enabled: false, logs: {}, skipped: "" }, // logs: { "YYYY-MM-DD": { mood, energy, stress, sleep, symptoms } }
   readinessSuggestions: undefined, // undefined = not chosen yet (follows cycle tracking for older saves)
+  // Optional activity tracking. days: { "YYYY-MM-DD": { steps, distanceKm, source: "manual" | "apple-health" | "health-connect", updatedAt } }
+  // source = the connected health app ("" = none). Demo numbers are generated on screen and never stored here.
+  activity: { enabled: false, goal: 8000, source: "", days: {}, celebrate: true, streak: true, demo: false, celebratedOn: "", view: "day", lastSync: 0 },
   // periodDays: { "YYYY-MM-DD": "spotting" | "light" | "medium" | "heavy" }
   menstrual: { asked: false, enabled: false, periodStarts: [], periodDays: {}, cycleLength: null, periodLength: 5, regularity: "unknown", contraception: "", checkins: [], dismissedInsights: {} },
   program: { name: "Glute Growth", repeatWeekly: true, cycleWeeks: 1, activeCycleWeek: 1, cycleStartedAt: todayKey(), days: [
@@ -132,6 +136,7 @@ async function initializeState() {
     await writeIndexedState(JSON.stringify(state));
   } catch { }
   if (!closeStaleWorkout()) render();
+  syncHealthData();
   if (state.activeWorkout?.restEndsAt) runRestTicker(); // resume a rest timer after the app was reloaded
   navigator.storage?.persist?.().catch(() => { });
 }
@@ -845,6 +850,244 @@ function beginCheckedWorkout(choice, suggestion = readinessSuggestion()) {
   save(); render();
   if (choice !== "normal") toast(choice === "light" ? "Lighter session ready. Your plan is unchanged." : "Adapted workout ready. Your plan is unchanged.");
 }
+// ---------- Activity: steps & distance ----------
+// Real numbers come from one place at a time: the connected health app (only through the native bridge below, which the
+// web version doesn't have) or entries the user adds. Demo mode shows labelled sample numbers that are never saved.
+function activity() {
+  if (!state.activity || typeof state.activity !== "object") state.activity = {};
+  for (const [key, value] of Object.entries(defaultState().activity)) if (state.activity[key] === undefined) state.activity[key] = value;
+  if (!state.activity.days || typeof state.activity.days !== "object") state.activity.days = {};
+  return state.activity;
+}
+// Native bridge, provided only by an installed iOS/Android build of Honna (for example a Capacitor wrapper):
+// window.HonnaHealth = { platform: "apple-health" | "health-connect", requestAuthorization() → { granted },
+//   getDailyTotals({ start, end }) → [{ date: "YYYY-MM-DD", steps, distanceMeters }], disconnect(), openSettings() }.
+// Totals must come from the platform's own daily aggregation (HealthKit statistics collection query, Health Connect
+// aggregate request), which merges phone + watch data without double counting. Honna never adds sources together.
+const healthApps = {
+  "apple-health": { name: "Apple Health", connect: "Connect Apple Health", store: "the App Store", devices: "iPhone and Apple Watch" },
+  "health-connect": { name: "Health Connect / Samsung Health", connect: "Connect Health Connect / Samsung Health", store: "Google Play", devices: "your phone and watch, including Samsung Health" },
+};
+function healthBridge() { const bridge = window.HonnaHealth; return bridge && typeof bridge.getDailyTotals === "function" && bridge.platform in healthApps ? bridge : null; }
+function devicePlatform() {
+  const agent = navigator.userAgent || "";
+  if (/iPhone|iPad|iPod/i.test(agent) || (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1)) return "ios";
+  return /Android/i.test(agent) ? "android" : "other";
+}
+function healthAppsForDevice() {
+  const bridge = healthBridge();
+  if (bridge) return [bridge.platform];
+  const platform = devicePlatform();
+  return platform === "ios" ? ["apple-health"] : platform === "android" ? ["health-connect"] : ["apple-health", "health-connect"];
+}
+function connectedHealthApp() { const source = activity().source; return source in healthApps ? source : ""; }
+let healthSyncing = false;
+async function syncHealthData() {
+  const bridge = healthBridge(), data = activity(), source = connectedHealthApp();
+  if (!data.enabled || !bridge || !source || bridge.platform !== source || healthSyncing) return;
+  healthSyncing = true;
+  try {
+    const totals = await bridge.getDailyTotals({ start: addDays(todayKey(), -60), end: todayKey() });
+    for (const day of Array.isArray(totals) ? totals : []) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day?.date || "") || day.date > todayKey()) continue;
+      const meters = Number(day.distanceMeters);
+      data.days[day.date] = { steps: Math.max(0, Math.round(Number(day.steps) || 0)), distanceKm: meters > 0 ? Math.round(meters / 10) / 100 : null, source, updatedAt: Date.now() };
+    }
+    data.lastSync = Date.now();
+    save();
+    if (state.activeTab === "Activity" && !workoutOpen() && !document.querySelector(".overlay")) render();
+  } catch { /* keep the last synced numbers; nothing is invented */ }
+  healthSyncing = false;
+}
+async function connectHealthApp(app) {
+  const bridge = healthBridge();
+  if (!bridge || bridge.platform !== app) { showHealthApp(app); return; }
+  try {
+    const result = await bridge.requestAuthorization();
+    if (!result?.granted) { toast(`Honna didn't get access. You can allow it later in ${healthApps[app].name}.`); return; }
+    activity().source = app; save();
+    document.querySelector(".overlay")?.remove(); render();
+    toast(`Connected to ${healthApps[app].name}.`);
+    syncHealthData();
+  } catch { toast("Couldn't connect right now. Nothing was changed."); }
+}
+function disconnectHealthApp() {
+  const app = connectedHealthApp();
+  if (!app) return;
+  try { healthBridge()?.disconnect?.(); } catch { }
+  activity().source = ""; save();
+  document.querySelector(".overlay")?.remove(); render();
+  toast(`Disconnected from ${healthApps[app].name}. Steps already synced stay on this device.`);
+}
+function showHealthApp(app) {
+  const info = healthApps[app];
+  const bridge = healthBridge();
+  const why = `<p class="muted-copy">Honna asks to <strong>read</strong> only two things: your <strong>step count</strong> and your <strong>walking + running distance</strong>, from ${info.devices}. It uses them to show your daily steps, goal and history. It never writes to ${info.name}, never shares the data, and keeps it on this device. You can disconnect anytime.</p>`;
+  if (connectedHealthApp() === app && bridge) {
+    const synced = activity().lastSync ? new Date(activity().lastSync).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "not yet";
+    showSheet(info.name, `Connected · last synced ${synced}.`, why, `<button class="secondary-button" data-action="activity-permissions">Manage permissions</button><button class="secondary-button" data-action="activity-sync">Sync now</button><button class="danger-button" data-action="activity-disconnect">Disconnect</button>`);
+    return;
+  }
+  if (bridge && bridge.platform === app) {
+    showSheet(info.connect, "", why, `<button class="secondary-button" data-action="close-sheet">Not now</button><button class="primary-button" data-action="activity-connect-go" data-app="${app}">CONNECT</button>`);
+    return;
+  }
+  showSheet(info.connect, "Not available in the web version of Honna yet.", `${why}<p class="muted-copy">${info.name} only shares data with apps installed from ${info.store}. Honna currently runs as a web app, so it can't read your steps from there yet, and it won't pretend to. Until the installable version exists, you can add your steps yourself, or look around with demo mode.</p>`, `<button class="secondary-button" data-action="close-sheet">Close</button><button class="primary-button" data-action="activity-add">ADD STEPS MYSELF</button>`);
+}
+// Clearly labelled sample numbers for demo mode: the same for a given date, never saved.
+function demoActivityDay(key) {
+  let hash = 7;
+  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  let steps = 3800 + (hash % 8400);
+  if (key === todayKey()) steps = Math.round(steps * Math.min(1, Math.max(0.15, (new Date().getHours() - 6) / 15)));
+  return { steps, distanceKm: Math.round(steps * 0.00074 * 100) / 100, source: "demo" };
+}
+function activityDay(key) {
+  const data = activity();
+  if (key > todayKey()) return null;
+  return data.demo ? demoActivityDay(key) : data.days[key] || null;
+}
+const stepsOn = (key) => activityDay(key)?.steps || 0;
+const formatSteps = (value) => Math.round(value).toLocaleString("en-US");
+const formatKm = (value) => `${(Math.round(value * 10) / 10).toLocaleString("en-US", { maximumFractionDigits: 1 })} km`;
+function sumActivity(from, to) {
+  let steps = 0, km = 0, days = 0, hasKm = false;
+  for (let key = from; key <= to; key = addDays(key, 1)) {
+    const day = activityDay(key);
+    if (!day) continue;
+    days += 1; steps += day.steps || 0;
+    if (day.distanceKm !== null && day.distanceKm !== undefined) { km += Number(day.distanceKm) || 0; hasKm = true; }
+  }
+  return { steps, km: hasKm ? km : null, days };
+}
+// Days in a row at or above the goal. Today only counts once it's reached, and doesn't break the streak before then.
+function stepStreak() {
+  const goal = activity().goal;
+  let key = todayKey();
+  if (stepsOn(key) < goal) key = addDays(key, -1);
+  let count = 0;
+  while (count < 3650 && stepsOn(key) >= goal) { count += 1; key = addDays(key, -1); }
+  return count;
+}
+const mondayOf = (key) => { const date = dateFromKey(key); return addDays(key, -((date.getDay() + 6) % 7)); };
+function renderActivityRing(steps, goal) {
+  const radius = 42, circumference = 2 * Math.PI * radius, share = goal > 0 ? Math.min(1, steps / goal) : 0;
+  return `<div class="act-ring${steps >= goal ? " goal-met" : ""}"><svg viewBox="0 0 100 100" aria-hidden="true"><circle class="act-track" cx="50" cy="50" r="${radius}"></circle><circle class="act-progress" cx="50" cy="50" r="${radius}" stroke-dasharray="${(share * circumference).toFixed(2)} ${circumference.toFixed(2)}" transform="rotate(-90 50 50)"></circle></svg><div class="act-ring-center"><strong>${formatSteps(steps)}</strong><span>of ${formatSteps(goal)} steps</span></div></div>`;
+}
+function renderWeekBars() {
+  const goal = activity().goal, today = todayKey(), monday = mondayOf(today);
+  const days = Array.from({ length: 7 }, (_, index) => addDays(monday, index));
+  const top = Math.max(goal, ...days.map(stepsOn)) * 1.08;
+  const bars = days.map((key) => {
+    const steps = stepsOn(key), future = key > today;
+    const label = dateFromKey(key).toLocaleDateString("en-US", { weekday: "narrow" });
+    return `<div class="act-bar${key === today ? " today" : ""}${steps >= goal ? " met" : ""}${future ? " future" : ""}" aria-label="${dateFromKey(key).toLocaleDateString("en-US", { weekday: "long" })}: ${future ? "upcoming" : `${formatSteps(steps)} steps`}"><span class="act-bar-value">${!future && steps ? (steps >= 1000 ? `${(steps / 1000).toFixed(1)}k` : steps) : ""}</span><span class="act-bar-track"><i style="height:${((steps / top) * 100).toFixed(1)}%"></i></span><span class="act-bar-day">${label}</span></div>`;
+  }).join("");
+  return `<div class="act-bars" style="--goal-line:${((goal / top) * 100).toFixed(1)}%">${bars}<span class="act-goal-line" aria-hidden="true"></span></div>`;
+}
+function renderActivityHistory() {
+  const data = activity(), today = todayKey(), goal = data.goal;
+  const tabs = [["day", "Days"], ["week", "Weeks"], ["month", "Months"]].map(([view, label]) => `<button class="act-seg-option${data.view === view ? " selected" : ""}" data-action="activity-view" data-view="${view}" aria-pressed="${data.view === view}">${label}</button>`).join("");
+  let rows = [];
+  if (data.view === "week") {
+    for (let i = 0; i < 8; i += 1) {
+      const start = addDays(mondayOf(today), -7 * i), end = i === 0 ? today : addDays(start, 6);
+      const total = sumActivity(start, end);
+      rows.push({ label: `${prettyDate(start)} – ${prettyDate(addDays(start, 6))}`, main: total.days ? `${formatSteps(total.steps)} steps` : "—", sub: total.days ? `${formatSteps(total.steps / total.days)} a day${total.km !== null ? ` · ${formatKm(total.km)}` : ""}` : "No data", met: false });
+    }
+  } else if (data.view === "month") {
+    const now = dateFromKey(today);
+    for (let i = 0; i < 6; i += 1) {
+      const first = new Date(now.getFullYear(), now.getMonth() - i, 1, 12), last = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 12);
+      const start = keyFromDate(first), end = i === 0 ? today : keyFromDate(last);
+      const total = sumActivity(start, end);
+      rows.push({ label: first.toLocaleDateString("en-US", { month: "long", year: "numeric" }), main: total.days ? `${formatSteps(total.steps)} steps` : "—", sub: total.days ? `${formatSteps(total.steps / total.days)} a day${total.km !== null ? ` · ${formatKm(total.km)}` : ""}` : "No data", met: false });
+    }
+  } else {
+    for (let i = 0; i < 7; i += 1) {
+      const key = addDays(today, -i), day = activityDay(key);
+      rows.push({ key, label: i === 0 ? "Today" : i === 1 ? "Yesterday" : prettyDate(key, { weekday: "short", month: "short", day: "numeric" }), main: day ? `${formatSteps(day.steps)} steps` : "—", sub: day ? (day.distanceKm !== null && day.distanceKm !== undefined ? formatKm(day.distanceKm) : "Distance not recorded") : "No data", met: day && day.steps >= goal });
+    }
+  }
+  const editable = !data.demo && !connectedHealthApp();
+  const list = rows.map((row) => {
+    const inner = `<span class="act-row-label">${row.label}</span><span class="act-row-values"><strong>${row.main}${row.met ? ` <span class="act-met" aria-label="goal reached">${icon("check")}</span>` : ""}</strong><small>${row.sub}</small></span>`;
+    return editable && row.key ? `<button class="act-row" data-action="activity-add" data-date="${row.key}">${inner}</button>` : `<div class="act-row">${inner}</div>`;
+  }).join("");
+  return `<section class="section"><div class="section-heading"><h2>History</h2></div><div class="act-seg" role="group" aria-label="History period">${tabs}</div><div class="act-list">${list}</div></section>`;
+}
+function renderActivity() {
+  const data = activity();
+  const intro = `<section class="page-intro"><div class="eyebrow">Steps & distance</div><h1>Activity</h1><p>How much you move, day by day.</p></section>`;
+  if (!data.enabled) return `${intro}<section class="act-card act-intro"><strong>Track your daily steps</strong><p>See your steps and walking distance next to your training, with a daily goal and your history. Honna only reads step count and distance, keeps them on this device, and you can turn this off anytime.</p><button class="primary-button" data-action="activity-enable">TURN ON ACTIVITY</button></section>`;
+  const today = todayKey(), goal = data.goal;
+  const day = activityDay(today), steps = day?.steps || 0;
+  const app = connectedHealthApp();
+  const demo = data.demo ? `<div class="act-demo" role="note"><strong>Demo mode</strong><span>Sample numbers to show how this looks, not your activity.</span><button class="link-button" data-action="activity-demo-off">Turn off</button></div>` : "";
+  const streak = data.streak ? stepStreak() : 0;
+  const remaining = Math.max(0, goal - steps);
+  const status = !day ? (data.demo ? "" : app ? "No steps synced yet today." : "No steps added for today yet.") : steps >= goal ? "Goal reached today." : `${formatSteps(remaining)} steps to your goal.`;
+  // Comparisons that are fair: this week so far against the same days last week.
+  const monday = mondayOf(today), daysIn = daysBetween(monday, today);
+  const thisWeek = sumActivity(monday, today), lastWeek = sumActivity(addDays(monday, -7), addDays(today, -7));
+  const yesterday = activityDay(addDays(today, -1));
+  const change = lastWeek.steps > 0 && thisWeek.days ? Math.round(((thisWeek.steps - lastWeek.steps) / lastWeek.steps) * 100) : null;
+  const stat = (label, value, note = "") => `<div class="preview-stat"><span>${label}</span><strong>${value}</strong>${note ? `<small>${note}</small>` : ""}</div>`;
+  const stats = `<div class="preview-stats act-stats">${stat("Distance", day?.distanceKm !== null && day?.distanceKm !== undefined ? formatKm(day.distanceKm) : "—", "today")}${stat("Yesterday", yesterday ? formatSteps(yesterday.steps) : "—", "steps")}${stat("This week", thisWeek.days ? formatSteps(thisWeek.steps) : "—", change === null ? `${daysIn + 1} of 7 days` : `${change >= 0 ? "+" : ""}${change}% vs last week`)}${data.streak ? stat("Streak", `${streak} ${streak === 1 ? "day" : "days"}`, "at your goal") : ""}</div>`;
+  const editable = !data.demo && !app;
+  const ringCard = `<section class="act-card act-today"><div class="act-today-head"><span class="eyebrow">Today</span>${editable ? `<button class="link-button" data-action="activity-add" data-date="${today}">${day ? "Edit" : "+ Add steps"}</button>` : ""}</div>${renderActivityRing(steps, goal)}<p class="act-status">${status}</p>${stats}</section>`;
+  const sourceCard = app
+    ? `<section class="act-card act-source"><div><strong>Connected to ${healthApps[app].name}</strong><small>${data.lastSync ? `Last synced ${new Date(data.lastSync).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Waiting for the first sync"}</small></div><button class="secondary-button" data-action="activity-connect" data-app="${app}">Manage</button></section>`
+    : `<section class="act-card act-source"><div><strong>Connect your health app</strong><small>Bring in steps from your phone and watch automatically.</small></div><div class="act-connect">${healthAppsForDevice().map((key) => `<button class="secondary-button" data-action="activity-connect" data-app="${key}">${healthApps[key].connect}</button>`).join("")}</div></section>`;
+  const select = (change, on, label) => `<select class="select-field" data-change="${change}" aria-label="${label}"><option value="on" ${on ? "selected" : ""}>On</option><option value="off" ${on ? "" : "selected"}>Off</option></select>`;
+  const settings = `<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Activity settings</div><div class="setting-row"><div><strong>Daily step goal</strong><small>${formatSteps(goal)} steps</small></div><button class="link-button" data-action="activity-goal">Change ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Goal celebration</strong><small>A small celebration when you reach your goal</small></div>${select("act-celebrate", data.celebrate, "Goal celebration")}</div><div class="setting-row"><div><strong>Step streak</strong><small>Days in a row at your goal</small></div>${select("act-streak", data.streak, "Step streak")}</div><div class="setting-row"><div><strong>Demo mode</strong><small>Sample numbers, clearly labelled, never saved</small></div>${select("act-demo", data.demo, "Demo mode")}</div><div class="setting-row"><div><strong>Activity tracking</strong><small>Turning it off keeps what's saved</small></div>${select("act-enabled", true, "Activity tracking")}</div></section>`;
+  return `${intro}${demo}${ringCard}<section class="section"><div class="section-heading"><h2>This week</h2><span class="eyebrow">Goal ${formatSteps(goal)}</span></div><div class="act-card act-week">${renderWeekBars()}</div></section>${renderActivityHistory()}${sourceCard}${settings}`;
+}
+// One celebration per day, for real numbers only.
+function maybeCelebrateSteps() {
+  const data = activity();
+  if (!data.enabled || data.demo || !data.celebrate || data.celebratedOn === todayKey()) return;
+  if (stepsOn(todayKey()) < data.goal) return;
+  data.celebratedOn = todayKey(); save();
+  document.querySelector(".act-ring")?.classList.add("celebrate");
+  toast(`<strong class="toast-title">Step goal reached 🎉</strong><span class="toast-line">${formatSteps(stepsOn(todayKey()))} steps today.</span>`, true, 4000);
+}
+function showActivityEntry(date = todayKey()) {
+  const day = activity().days[date];
+  const title = date === todayKey() ? "Today's steps" : "Steps";
+  showSheet(title, "Add the numbers from your phone, watch or health app.", `<label class="field"><span class="field-label">Day</span><input class="text-field" type="date" id="act-date" max="${todayKey()}" value="${date}"></label><div class="counter-row"><label class="field"><span class="field-label">Steps</span><input class="number-field" type="number" id="act-steps" min="0" max="200000" inputmode="numeric" placeholder="e.g. 7500" value="${day ? day.steps : ""}"></label><label class="field"><span class="field-label">Distance (km) <small>optional</small></span><input class="number-field" type="number" id="act-km" min="0" max="300" step="0.1" inputmode="decimal" placeholder="e.g. 5.2" value="${day?.distanceKm ?? ""}"></label></div>`, `${day ? `<button class="danger-button" data-action="activity-delete-entry" data-date="${date}">Delete</button>` : `<button class="secondary-button" data-action="close-sheet">Cancel</button>`}<button class="primary-button" data-action="activity-save-entry">SAVE</button>`);
+  // Picking another day shows what's already saved for it.
+  document.querySelector("#act-date")?.addEventListener("change", (event) => {
+    const saved = activity().days[event.target.value];
+    document.querySelector("#act-steps").value = saved ? saved.steps : "";
+    document.querySelector("#act-km").value = saved?.distanceKm ?? "";
+  });
+  setTimeout(() => document.querySelector("#act-steps")?.focus(), 50);
+}
+function saveActivityEntry() {
+  const date = document.querySelector("#act-date")?.value;
+  const steps = Number(document.querySelector("#act-steps")?.value);
+  const kmRaw = document.querySelector("#act-km")?.value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "") || date > todayKey()) { document.querySelector("#act-date")?.focus(); toast("Pick a day up to today."); return; }
+  if (!Number.isFinite(steps) || steps < 0 || steps > 200000 || document.querySelector("#act-steps").value.trim() === "") { document.querySelector("#act-steps").focus(); toast("Add a step count between 0 and 200,000."); return; }
+  const km = kmRaw === "" ? null : Number(kmRaw);
+  if (km !== null && (!Number.isFinite(km) || km < 0 || km > 300)) { document.querySelector("#act-km").focus(); toast("Distance should be between 0 and 300 km."); return; }
+  activity().days[date] = { steps: Math.round(steps), distanceKm: km === null ? null : Math.round(km * 100) / 100, source: "manual", updatedAt: Date.now() };
+  save(); document.querySelector(".overlay")?.remove(); render();
+  maybeCelebrateSteps();
+}
+function showActivityGoal() {
+  const goal = activity().goal;
+  showSheet("Daily step goal", "Pick a goal that fits your days. You can change it anytime.", `<div class="act-goal-options">${[5000, 6000, 7000, 8000, 10000, 12000].map((value) => `<button class="theme-option${value === goal ? " selected" : ""}" data-action="activity-set-goal" data-goal="${value}">${formatSteps(value)}</button>`).join("")}</div><label class="field"><span class="field-label">Or your own</span><input class="number-field" type="number" id="act-goal" min="500" max="50000" step="500" inputmode="numeric" value="${goal}"></label>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="activity-save-goal">SAVE</button>`);
+}
+function setActivityGoal(value) {
+  const goal = Math.round(Number(value));
+  if (!Number.isFinite(goal) || goal < 500 || goal > 50000) { toast("Choose a goal between 500 and 50,000 steps."); return; }
+  activity().goal = goal; save(); document.querySelector(".overlay")?.remove(); render();
+  toast(`Daily goal: ${formatSteps(goal)} steps.`);
+  maybeCelebrateSteps();
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncHealthData(); });
 // A workout in progress is either open (full screen) or paused while you look around the app.
 function workoutOpen() { return Boolean(state.activeWorkout) && !state.workoutPaused; }
 function render() {
@@ -852,7 +1095,7 @@ function render() {
   if (!state.onboarded) return renderOnboarding();
   if (workoutOpen()) { app.innerHTML = renderWorkout(); syncBackHistory(); return; }
   const tab = state.activeTab;
-  app.innerHTML = `${renderTopbar()}${tab === "Home" ? renderHome() : tab === "Plan" ? renderPlan() : tab === "Progress" ? renderProgress() : renderProfile()}${renderResumeBar()}${renderNav()}`;
+  app.innerHTML = `${renderTopbar()}${tab === "Home" ? renderHome() : tab === "Plan" ? renderPlan() : tab === "Progress" ? renderProgress() : tab === "Activity" ? renderActivity() : renderProfile()}${renderResumeBar()}${renderNav()}`;
   app.classList.toggle("has-resume-bar", Boolean(state.activeWorkout));
   syncBackHistory();
   if (tab === "Progress") {
@@ -939,7 +1182,7 @@ function renderTopbar() {
   return `<header class="topbar"><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><button class="top-action" data-action="profile" aria-label="Open profile">${icon("profile")}</button></header>`;
 }
 function renderNav() {
-  const tabs = [["Home", "home"], ["Plan", "plan"], ["Progress", "progress"], ["Profile", "profile"]];
+  const tabs = [["Home", "home"], ["Plan", "plan"], ["Activity", "activity"], ["Progress", "progress"], ["Profile", "profile"]];
   return `<nav class="bottom-nav" aria-label="Main navigation">${tabs.map(([label, glyph]) => `<button class="nav-item ${state.activeTab === label ? "active" : ""}" data-tab="${label}">${icon(glyph)}<span>${label}</span></button>`).join("")}</nav>`;
 }
 function renderHome() {
@@ -2495,6 +2738,10 @@ function bindSelects() {
     if (select.dataset.change === "weight-step") state.weightStep = Number(select.value);
     if (select.dataset.change === "toggle-wellbeing") { wellbeing().enabled = select.value === "on"; toast(select.value === "on" ? "Wellbeing tracking is on. Check in from Home." : "Wellbeing tracking is off. Your past logs are kept."); }
     if (select.dataset.change === "toggle-tip") state.tipOfDay = select.value === "on";
+    if (select.dataset.change === "act-celebrate") activity().celebrate = select.value === "on";
+    if (select.dataset.change === "act-streak") activity().streak = select.value === "on";
+    if (select.dataset.change === "act-demo") { activity().demo = select.value === "on"; if (activity().demo) toast("Demo mode: sample numbers, not your activity."); }
+    if (select.dataset.change === "act-enabled" && select.value === "off") { activity().enabled = false; toast("Activity tracking is off. What's saved is kept."); }
     if (select.dataset.change === "toggle-readiness") { state.readinessSuggestions = select.value === "on"; toast(select.value === "on" ? "Readiness suggestions are on. Honna will only suggest; you decide." : "Readiness suggestions are off."); }
     if (select.dataset.change === "toggle-cycle") {
       if (select.value === "on") { if (sortedPeriodStarts().length) { menstrual().enabled = true; menstrual().asked = true; } else { save(); render(); showCycleSetup(); return; } }
@@ -2509,7 +2756,7 @@ function bindSelects() {
 }
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action], [data-tab]"); if (!button) return;
-  if (button.dataset.tab) { state.activeTab = button.dataset.tab; save(); render(); return; }
+  if (button.dataset.tab) { state.activeTab = button.dataset.tab; save(); render(); if (state.activeTab === "Activity") { syncHealthData(); maybeCelebrateSteps(); } return; }
   const { action } = button.dataset;
   if (action === "profile") { state.activeTab = "Profile"; save(); render(); }
   else if (action === "onboarding-next") showSexOnboarding("plans");
@@ -2545,6 +2792,20 @@ document.addEventListener("click", (event) => {
   else if (action === "set-flow") { setPeriodDay(button.dataset.date, button.dataset.flow); save(); render(); showCycleView(); toast(button.dataset.flow ? `${flowOptions.find(([value]) => value === button.dataset.flow)[1]} logged for ${prettyDate(button.dataset.date)}.` : `Cleared ${prettyDate(button.dataset.date)}.`); }
   else if (action === "cycle-details") showCycleView();
   else if (action === "research-library") showResearchLibrary();
+  else if (action === "activity-enable") { activity().enabled = true; save(); render(); toast("Activity is on. Connect your health app or add your steps."); }
+  else if (action === "activity-connect") showHealthApp(button.dataset.app);
+  else if (action === "activity-connect-go") connectHealthApp(button.dataset.app);
+  else if (action === "activity-disconnect") disconnectHealthApp();
+  else if (action === "activity-sync") { document.querySelector(".overlay")?.remove(); syncHealthData(); }
+  else if (action === "activity-permissions") { try { healthBridge()?.openSettings?.(); } catch { } }
+  else if (action === "activity-add") { document.querySelector(".overlay")?.remove(); if (activity().demo) { toast("Turn off demo mode to add your own steps."); return; } showActivityEntry(button.dataset.date || todayKey()); }
+  else if (action === "activity-save-entry") saveActivityEntry();
+  else if (action === "activity-delete-entry") { delete activity().days[button.dataset.date]; save(); document.querySelector(".overlay")?.remove(); render(); toast("Entry deleted."); }
+  else if (action === "activity-view") { activity().view = button.dataset.view; save(); render(); }
+  else if (action === "activity-goal") showActivityGoal();
+  else if (action === "activity-set-goal") setActivityGoal(button.dataset.goal);
+  else if (action === "activity-save-goal") setActivityGoal(document.querySelector("#act-goal")?.value);
+  else if (action === "activity-demo-off") { activity().demo = false; save(); render(); }
   else if (action === "wb-set") { setWellbeingValue(button.dataset.field, Number(button.dataset.value)); save(); if (button.dataset.context === "sheet") showPreWorkoutCheckIn(pendingWorkoutStart); else render(); }
   else if (action === "wb-symptom") {
     const log = wellbeing().logs[todayKey()] ||= {};
