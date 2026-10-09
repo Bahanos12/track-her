@@ -264,3 +264,9 @@ button.exercise-row { width: 100%; border-width: 0 0 1px; border-style: solid; b
 .act-goal-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }.act-goal-options .theme-option { justify-content: center; min-height: 42px; font-weight: 700; }
 .privacy-note { margin: 0 0 22px; color: var(--muted); font-size: 12px; text-align: center; }.privacy-note a { color: var(--sage-dark); font-weight: 700; }
 #app.app-shell { min-height: calc(100dvh + var(--start-room, 0px)); }
+/* Phones that draw under the status bar (the Android app, iPhone home-screen app): keep content below it,
+   with a strip in the page colour behind the status bar so scrolled content never shows through. */
+:root { --safe-top: env(safe-area-inset-top, var(--safe-area-inset-top, 0px)); }
+#app.app-shell { padding-top: var(--safe-top); }
+body::before { content: ""; position: fixed; z-index: 40; top: 0; left: 0; right: 0; height: var(--safe-top); background: var(--paper); pointer-events: none; }
+.overlay { padding-top: calc(16px + var(--safe-top)); }

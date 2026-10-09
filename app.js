@@ -1103,9 +1103,11 @@ function scrollToScreenStart() {
   if (topbar) {
     const barEnd = topbar.getBoundingClientRect().bottom + window.scrollY;
     const heading = topbar.nextElementSibling?.querySelector(".eyebrow, h1");
-    // The heading lands 24px from the top on every screen; only the bar's empty bottom padding may stay in view.
-    start = heading ? heading.getBoundingClientRect().top + window.scrollY - 24 : barEnd;
-    start = Math.round(Math.max(0, barEnd - 12, Math.min(start, barEnd)));
+    // The heading lands 24px below the top (below the phone's status bar, if the app draws under it) on every screen;
+    // only the bar's empty bottom padding may stay in view.
+    const statusBar = parseFloat(getComputedStyle(app).paddingTop) || 0;
+    start = heading ? heading.getBoundingClientRect().top + window.scrollY - 24 - statusBar : barEnd;
+    start = Math.round(Math.max(0, barEnd - statusBar - 12, Math.min(start, barEnd - statusBar)));
   }
   // Always leave room to scroll that far, so a short screen never shows the top bar half cut off.
   app.style.setProperty("--start-room", `${start}px`);
