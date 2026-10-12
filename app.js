@@ -18,6 +18,8 @@ const iconPaths = {
   swap: '<path d="m16 3 4 4-4 4M20 7H4m4 14-4-4 4-4m-4 4h16"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2m-10 0 1 14h10l1-14M10 11v5m4-5v5"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  route: '<circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h7.5a3.5 3.5 0 0 0 0-7h-7a3.5 3.5 0 0 1 0-7H16"/>',
+  flame: '<path d="M12 22c4 0 7-2.8 7-6.8 0-3.4-2.2-5.6-4-7.7-.6 1.8-1.6 2.9-2.8 3.3.3-3.5-1.3-6.6-4.2-8.8.2 3.5-3 6.2-3 10.4C5 18.8 8 22 12 22Z"/>',
   activity: '<path d="M6 21c-1.7 0-2.5-1.3-2.5-3.2C3.5 14.5 4.6 11 6.6 11c1.6 0 2.3 1.9 2.3 4.4S8.2 21 6 21Z"/><path d="M15.5 13c-1.7 0-2.5-1.3-2.5-3.2C13 6.5 14.1 3 16.1 3c1.6 0 2.3 1.9 2.3 4.4S17.7 13 15.5 13Z"/><path d="M4.2 17.5h4.3M13.7 9.5H18"/>',
 };
 const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name] || ""}</svg>`;
@@ -1037,7 +1039,7 @@ function syncLine(data) {
 function renderActivity() {
   const data = activity();
   const intro = `<section class="page-intro"><div class="eyebrow">Steps & distance</div><h1>Activity</h1><p>How much you move, day by day.</p></section>`;
-  if (!data.enabled) return `${intro}<section class="act-card act-intro"><strong>Track your daily steps</strong><p>See your steps and walking distance next to your training, with a daily goal and your history. Honna only reads step count and distance, keeps them on this device, and you can turn this off anytime.</p><button class="primary-button" data-action="activity-enable">TURN ON ACTIVITY</button></section>`;
+  if (!data.enabled) return `${intro}<section class="act-card act-intro"><span class="act-badge" aria-hidden="true">${icon("activity")}</span><strong>Track your daily steps</strong><p>See your steps and walking distance next to your training, with a daily goal and your history. Honna only reads step count and distance, keeps them on this device, and you can turn this off anytime.</p><button class="primary-button" data-action="activity-enable">TURN ON ACTIVITY</button></section>`;
   const today = todayKey(), goal = data.goal;
   const day = activityDay(today), steps = day?.steps || 0;
   const app = connectedHealthApp();
@@ -1050,10 +1052,10 @@ function renderActivity() {
   const thisWeek = sumActivity(monday, today), lastWeek = sumActivity(addDays(monday, -7), addDays(today, -7));
   const yesterday = activityDay(addDays(today, -1));
   const change = lastWeek.steps > 0 && thisWeek.days ? Math.round(((thisWeek.steps - lastWeek.steps) / lastWeek.steps) * 100) : null;
-  const stat = (label, value, note = "") => `<div class="preview-stat"><span>${label}</span><strong>${value}</strong>${note ? `<small>${note}</small>` : ""}</div>`;
-  const stats = `<div class="preview-stats act-stats">${stat("Distance", day?.distanceKm !== null && day?.distanceKm !== undefined ? formatKm(day.distanceKm) : "—", "today")}${stat("Yesterday", yesterday ? formatSteps(yesterday.steps) : "—", "steps")}${stat("This week", thisWeek.days ? formatSteps(thisWeek.steps) : "—", change === null ? `${daysIn + 1} of 7 days` : `${change >= 0 ? "+" : ""}${change}% vs last week`)}${data.streak ? stat("Streak", `${streak} ${streak === 1 ? "day" : "days"}`, "at your goal") : ""}</div>`;
+  const stat = (kind, glyph, label, value, note = "") => `<div class="act-tile act-tile-${kind}"><span class="act-tile-icon" aria-hidden="true">${icon(glyph)}</span><span class="act-tile-label">${label}</span><strong>${value}</strong>${note ? `<small>${note}</small>` : ""}</div>`;
+  const stats = `<div class="act-tiles act-stats">${stat("distance", "route", "Distance", day?.distanceKm !== null && day?.distanceKm !== undefined ? formatKm(day.distanceKm) : "—", "today")}${stat("yesterday", "history", "Yesterday", yesterday ? formatSteps(yesterday.steps) : "—", "steps")}${stat("week", "plan", "This week", thisWeek.days ? formatSteps(thisWeek.steps) : "—", change === null ? `${daysIn + 1} of 7 days` : `${change >= 0 ? "+" : ""}${change}% vs last week`)}${data.streak ? stat("streak", "flame", "Streak", `${streak} ${streak === 1 ? "day" : "days"}`, "at your goal") : ""}</div>`;
   const editable = !data.demo && !app;
-  const ringCard = `<section class="act-card act-today"><div class="act-today-head"><span class="eyebrow">Today</span>${editable ? `<button class="link-button" data-action="activity-add" data-date="${today}">${day ? "Edit" : "+ Add steps"}</button>` : ""}</div>${renderActivityRing(steps, goal)}<p class="act-status">${status}</p>${stats}</section>`;
+  const ringCard = `<section class="act-card act-today act-hero${steps >= goal ? " goal-met" : ""}"><div class="act-today-head"><span class="eyebrow">Today</span>${editable ? `<button class="act-chip-button" data-action="activity-add" data-date="${today}">${day ? "Edit" : "+ Add steps"}</button>` : ""}</div>${renderActivityRing(steps, goal)}${status ? `<p class="act-status">${status}</p>` : ""}</section>${stats}`;
   const sourceCard = app
     ? `<section class="act-card act-source"><div><strong>Connected to ${healthApps[app].name}</strong><small>${syncLine(data)}</small></div><div class="act-source-actions"><button class="secondary-button" data-action="activity-sync">Sync now</button><button class="secondary-button" data-action="activity-connect" data-app="${app}">Manage</button></div></section>`
     : `<section class="act-card act-source"><div><strong>Connect your health app</strong><small>Bring in steps from your phone and watch automatically.</small></div><div class="act-connect">${healthAppsForDevice().map((key) => `<button class="secondary-button" data-action="activity-connect" data-app="${key}">${healthApps[key].connect}</button>`).join("")}</div></section>`;

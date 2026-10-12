@@ -271,3 +271,39 @@ button.exercise-row { width: 100%; border-width: 0 0 1px; border-style: solid; b
 body::before { content: ""; position: fixed; z-index: 40; top: 0; left: 0; right: 0; height: var(--safe-top); background: var(--paper); pointer-events: none; }
 .overlay { padding-top: calc(16px + var(--safe-top)); }
 .act-source-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Activity: its own lively palette, taken from the app icon (pink → orange), with one colour per stat. */
+:root { --act-pink: #ff2d6c; --act-coral: #fc5862; --act-orange: #fd8e52; --act-deep: #d4145a; --act-ember: #ef6a3a; --act-soft: #ffe9ee; }
+.act-hero { position: relative; overflow: hidden; border: 0; color: white; background: linear-gradient(140deg, var(--act-deep) 0%, #e8304f 48%, var(--act-ember) 100%); box-shadow: 0 14px 30px rgba(212, 20, 90, .22); }
+.act-hero::before { content: ""; position: absolute; width: 260px; height: 260px; right: -90px; top: -110px; border-radius: 50%; background: radial-gradient(circle, rgba(255, 255, 255, .22), rgba(255, 255, 255, 0) 70%); pointer-events: none; }
+.act-hero .eyebrow { color: rgba(255, 255, 255, .92); }
+.act-chip-button { min-height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, .22); color: white; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.act-hero .act-track { stroke: rgba(255, 255, 255, .26); }
+.act-hero .act-progress, .act-hero.goal-met .act-progress { stroke: white; }
+.act-hero .act-ring-center strong { color: white; }
+.act-hero .act-ring-center span { color: white; opacity: .95; font-weight: 700; }
+.act-hero .act-status { padding: 7px 14px; border-radius: 999px; background: white; color: var(--act-deep); font-size: 13px; font-weight: 800; box-shadow: 0 4px 12px rgba(120, 10, 40, .18); }
+.act-hero.goal-met .act-status::before { content: "✓ "; }
+.act-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.act-tile { --tile: #157a6e; --tile-bg: #e2f5f1; display: grid; grid-template-columns: 30px 1fr; column-gap: 9px; align-items: center; padding: 12px; border-radius: 6px 16px 6px 16px; background: var(--tile-bg); }
+.act-tile-icon { grid-row: span 3; display: grid; place-items: center; width: 30px; height: 30px; align-self: start; border-radius: 50%; background: white; color: var(--tile); }
+.act-tile-icon svg { width: 17px; height: 17px; stroke-width: 2.2; }
+.act-tile-label { color: var(--tile); font-size: 10px; font-weight: 800; letter-spacing: .7px; text-transform: uppercase; }
+.act-tile strong { color: var(--ink); font: 800 18px/1.25 Manrope, sans-serif; overflow-wrap: anywhere; }
+.act-tile small { color: var(--ink); opacity: .72; font-size: 11px; }
+.act-tile-yesterday { --tile: #5b3fb8; --tile-bg: #ece7fb; }
+.act-tile-week { --tile: #a35a00; --tile-bg: #fff0d9; }
+.act-tile-streak { --tile: #c8174f; --tile-bg: #ffe4ea; }
+.act-week { border: 0; background: linear-gradient(180deg, #fff 0%, #fff6f3 100%); box-shadow: var(--shadow); }
+.act-bar-track i { background: #ffd2dc; }
+.act-bar.met .act-bar-track i { background: linear-gradient(0deg, var(--act-pink), var(--act-orange)); }
+.act-bar.today:not(.met) .act-bar-track i { background: linear-gradient(0deg, #ff86a5, #feb98f); }
+.act-bar.met .act-bar-value { color: var(--act-deep); }
+.act-bar.today .act-bar-day { color: var(--act-deep); }
+.act-goal-line { border-top-color: var(--act-coral); opacity: .7; }
+.act-seg { background: var(--act-soft); }.act-seg-option { color: #b3134b; }.act-seg-option.selected { color: var(--act-deep); }
+.act-met { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(140deg, var(--act-pink), var(--act-orange)); }.act-met svg { width: 12px; height: 12px; color: white; stroke-width: 3; }
+.act-source { border: 0; background: linear-gradient(135deg, #fff0f3, #fff3ea); }
+.act-intro { border: 0; box-shadow: var(--shadow); }
+.act-badge { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 14px; background: linear-gradient(140deg, var(--act-pink), var(--act-orange)); color: white; box-shadow: 0 8px 18px rgba(255, 45, 108, .28); }.act-badge svg { width: 26px; height: 26px; }
+.act-intro .primary-button { background: linear-gradient(140deg, var(--act-deep), var(--act-ember)); color: white; border: 0; }
