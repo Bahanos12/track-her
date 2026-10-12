@@ -37,11 +37,24 @@ const colorThemes = [
   { id: "aubergine", name: "Aubergine & Sand", colors: ["#3f1d47", "#e06e2d", "#e9d2aa"] },
   { id: "terracotta", name: "Brick & Apricot", colors: ["#a04740", "#ef9c44", "#f3e1c8"] },
 ];
+// Appearance: "light" (default), "dark", or "auto" (follow the phone's setting).
+const darkQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
+function darkMode() { return state.appearance === "dark" || (state.appearance === "auto" && Boolean(darkQuery?.matches)); }
+let appliedStatusBar = "";
 function applyTheme() {
   const theme = colorThemes.find((candidate) => candidate.id === state.theme) || colorThemes[0];
   if (theme.id === "plum") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = theme.id;
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.colors[0]);
+  const dark = darkMode();
+  if (dark) document.documentElement.dataset.appearance = "dark"; else delete document.documentElement.dataset.appearance;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? getComputedStyle(document.documentElement).getPropertyValue("--paper").trim() || "#1a1418" : theme.colors[0]);
+  // In the Android app, status-bar icons follow: light icons on dark, dark icons on light.
+  const barStyle = dark ? "DARK" : "LIGHT";
+  if (nativeApp && appliedStatusBar !== barStyle) {
+    appliedStatusBar = barStyle;
+    try { window.Capacitor.nativePromise("SystemBars", "setStyle", { style: barStyle }).catch(() => { }); } catch { }
+  }
 }
+darkQuery?.addEventListener?.("change", () => { if (state.appearance === "auto") applyTheme(); });
 const defaultState = () => ({
   version: 1, onboarded: false, name: "Sarah", units: "kg", weightStep: 2.5, theme: "plum", activeTab: "Home", activeWorkout: null, workoutPaused: false, todayWorkoutOverride: null, restAlerts: "", // "" = not asked, "on" | "off"
   sex: "", // "female" | "male" | "unspecified" ("" = not asked yet)
@@ -463,6 +476,62 @@ function todaysCycleSuggestion() {
   return cycleInsights().filter((insight) => insight.bucket === info.bucket && insight.kind in order && !menstrual().dismissedInsights[`${insight.id}:${info.start}`])
     .sort((a, b) => order[a.kind] - order[b.kind] || b.strength - a.strength)[0] || null;
 }
+// ---------- Deload: a planned lighter week ----------
+// Suggested after 6+ hard weeks in a row (2+ sessions, mostly not "lighter"), or 3+ hard weeks when check-ins have been low.
+// Never automatic: during a planned lighter week Honna suggests a lighter session at each start, and you choose.
+function deloadInfo() {
+  const plan = state.deload || {};
+  const today = todayKey();
+  return { ...plan, active: Boolean(plan.start && plan.end && plan.start <= today && today <= plan.end) };
+}
+function hardWeekStreak() {
+  const weeks = new Map();
+  for (const workout of state.history) {
+    const week = mondayOf(workout.date);
+    const entry = weeks.get(week) || { count: 0, light: 0 };
+    entry.count += 1;
+    if (workout.readiness?.choice === "light") entry.light += 1;
+    weeks.set(week, entry);
+  }
+  let week = mondayOf(todayKey());
+  if ((weeks.get(week)?.count || 0) < 2) week = addDays(week, -7); // this week counts once it has two sessions
+  const plannedLightWeek = state.deload?.start ? mondayOf(state.deload.start) : "";
+  let streak = 0;
+  while (streak < 104) {
+    const entry = weeks.get(week);
+    if (!entry || entry.count < 2 || entry.light * 2 >= entry.count || week === plannedLightWeek) break;
+    streak += 1;
+    week = addDays(week, -7);
+  }
+  return streak;
+}
+function lowCheckinTrend() {
+  if (!wellbeingOn()) return false;
+  const recent = Array.from({ length: 7 }, (_, index) => wellbeing().logs[addDays(todayKey(), -index)]).filter(wellbeingComplete);
+  if (recent.length < 4) return false;
+  const average = (key) => recent.reduce((sum, log) => sum + Number(log[key]), 0) / recent.length;
+  return average("energy") <= 2.4 || average("sleep") <= 2.4;
+}
+function deloadSuggestion() {
+  const plan = deloadInfo(), today = todayKey();
+  if (plan.active || (plan.snoozeUntil && today < plan.snoozeUntil) || (plan.end && daysBetween(plan.end, today) < 28)) return null;
+  const weeks = hardWeekStreak(), low = lowCheckinTrend();
+  return weeks >= 6 || (weeks >= 3 && low) ? { weeks, low: low && weeks < 6 } : null;
+}
+function renderDeloadCard() {
+  const plan = deloadInfo();
+  if (plan.active) return `<section class="cycle-card deload-card"><div><strong>Lighter week · until ${prettyDate(plan.end, { weekday: "short", month: "short", day: "numeric" })}</strong><small>Fewer sets, lighter weights. Honna suggests a lighter session each time you start; you still choose.</small></div><button class="secondary-button cycle-log" data-action="deload-end">End early</button></section>`;
+  const suggestion = deloadSuggestion();
+  if (!suggestion) return "";
+  const why = suggestion.low ? `You've trained hard for ${suggestion.weeks} weeks and your check-ins have been low lately.` : `You've trained hard for ${suggestion.weeks} weeks in a row.`;
+  return `<section class="cycle-card deload-card deload-suggest"><div><strong>Time for a lighter week?</strong><small>${why} Coaches plan a lighter week (fewer sets, lighter weights) every 4–8 weeks to recover and come back stronger.</small>${sourceLink("bell2023")}</div><div class="cycle-actions"><button class="secondary-button" data-action="deload-snooze">Not now</button><button class="primary-button" data-action="deload-start">PLAN IT</button></div></section>`;
+}
+function renderStepsChip() {
+  if (!activity().enabled) return "";
+  const goal = activity().goal, steps = stepsOn(todayKey()), logged = Boolean(activityDay(todayKey()));
+  const detail = logged ? (steps >= goal ? "Goal reached today" : `${formatSteps(goal - steps)} to your ${formatSteps(goal)} goal`) : connectedHealthApp() ? "No steps synced yet today" : "Tap to add today's steps";
+  return `<button class="steps-chip" data-tab="Activity" aria-label="Steps today: ${logged ? formatSteps(steps) : "none yet"}. Open Activity"><span class="steps-chip-icon" aria-hidden="true">${icon("activity")}</span><span class="steps-chip-text"><strong>${logged ? `${formatSteps(steps)} steps` : "Steps today"}</strong><small>${detail}</small></span><span class="steps-chip-bar" aria-hidden="true"><i style="width:${Math.min(100, goal ? (steps / goal) * 100 : 0).toFixed(0)}%"></i></span></button>`;
+}
 function renderCycleCard() {
   if (!cycleAvailable()) return renderAboutYouCard();
   const data = menstrual();
@@ -709,7 +778,9 @@ function readinessSuggestion() {
   if (pattern) { score += 2; reasons.push(pattern.text.replace(/\.$/, "").replace(/^You /, "you ").replace(/^Your /, "your ")); }
   // Heavy flow or period pain: no option is suggested, the person decides (rest is offered too).
   if (painOrHeavyDay()) return { level: "none", score, reasons, pattern };
-  const level = score >= 4 ? "light" : score >= 2 ? "adapted" : "keep";
+  let level = score >= 4 ? "light" : score >= 2 ? "adapted" : "keep";
+  // A planned lighter week: suggest the lighter session (still only a suggestion).
+  if (deloadInfo().active) { level = "light"; reasons.unshift("your planned lighter week"); }
   return { level, score, reasons, pattern };
 }
 // ---------- Evidence-based training advice ----------
@@ -824,7 +895,7 @@ function showReadinessSuggestion(start) {
   showSheet("A gentle suggestion", `${suggestionHeadline(suggestion)} ${why} You decide.`, `<div class="readiness-options">${option("keep", "Keep my planned workout", "Nothing changes")}${option("adapted", "Reduce intensity", "One set fewer per exercise, same weights, leave 2–3 reps in reserve")}${option("light", "Lighter session", "About half the sets, ~10% lighter, longer rest")}${restOption}</div>${advice.length ? `<div class="preview-block"><div class="field-label">What the research says</div>${renderAdviceList(advice)}</div>` : ""}`, `<button class="secondary-button" data-action="close-sheet">Cancel</button>`);
 }
 function beginStartFlowChecks(start) {
-  if (!readinessOn()) { launchWorkout(start.workoutId, start.scheduledWorkoutId); return; }
+  if (!readinessOn() && !deloadInfo().active) { launchWorkout(start.workoutId, start.scheduledWorkoutId); return; }
   if (wellbeingOn() && !wellbeingComplete(todaysWellbeing()) && wellbeing().skipped !== todayKey()) { showPreWorkoutCheckIn(start); return; }
   showReadinessSuggestion(start);
 }
@@ -1260,7 +1331,7 @@ function renderHome() {
   return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>
     <div class="section-heading"><h2>${isToday ? "Today's workout" : "Up next"}</h2><button class="link-button" data-tab="Plan">View plan</button></div>
     <section class="today-card"><div class="today-top"><span class="eyebrow">${escapeHtml(scheduledWorkout.day)} · ${isToday ? "Today" : "Coming up"}${alternate ? " · Changed for today" : ""}</span><div class="today-card-actions"><span class="date-chip">${weekdayNames.includes(scheduledWorkout.day) ? prettyDate(keyFromDate(weekdayDate(scheduledWorkout.day)), { month: "short", day: "numeric" }) : "Any day"}</span>${alternatives.length ? `<button class="today-options-button" data-action="change-today-workout" data-scheduled-day-id="${scheduledWorkout.id}" aria-label="More workout options" title="More workout options">${icon("more")}</button>` : ""}</div></div><div class="today-title">${escapeHtml(workout.name)}</div><p class="today-meta">${workout.exercises.length} exercises <span aria-hidden="true">·</span> Approximately ${estimateDuration(workout)} min</p><div class="today-bottom"><div class="avatar-stack"><span class="tiny-dots"><i></i><i></i><i></i></span><span>${escapeHtml(state.program.name)}</span></div><button class="primary-button" data-action="start-workout" data-workout-id="${workout.id}" data-scheduled-workout-id="${scheduledWorkout.id}">${state.activeWorkout?.workoutId === workout.id ? "RESUME WORKOUT" : "START WORKOUT"} ${icon("arrow")}</button></div></section>
-    ${renderUndoFinishCard()}${renderCycleCard()}${renderWellbeingCard()}
+    ${renderUndoFinishCard()}${renderDeloadCard()}${renderCycleCard()}${renderWellbeingCard()}${renderStepsChip()}
     <section class="section"><div class="section-heading"><h2>Today's flow</h2><span class="eyebrow">${workout.exercises.length} moves</span></div><div class="exercise-preview">${workout.exercises.map((exercise, index) => `<button class="exercise-row" data-action="preview-exercise" data-day-id="${workout.id}" data-exercise-id="${exercise.id}" aria-label="Preview ${escapeHtml(exercise.name)}"><span class="exercise-number">${String(index + 1).padStart(2, "0")}</span><span class="exercise-row-main"><span class="exercise-row-name">${escapeHtml(exercise.name)}</span>${exercise.notes ? `<span class="exercise-row-detail">${escapeHtml(exercise.notes)}</span>` : ""}</span><span class="target-pill">${exercise.sets} × ${exercise.reps || "—"}</span></button>`).join("") || `<div class="empty-state"><p>Add exercises to this workout in your plan.</p></div>`}</div></section>
     ${renderTipOfTheDay()}
     ${last ? `<section class="section"><div class="section-heading"><h2>Last workout</h2><button class="link-button" data-tab="Progress">History</button></div><div class="last-workout"><div><div class="exercise-row-name">${escapeHtml(last.name)}</div><div class="exercise-row-detail">Completed ${prettyDate(last.date, { weekday: "long", month: "short", day: "numeric" })}</div></div><span class="last-icon">${icon("history")}</span></div></section>` : ""}
@@ -1285,7 +1356,7 @@ function renderProgress() {
   const records = selected ? recordsFor(selected).sort((a, b) => a.date.localeCompare(b.date)) : [];
   const best = records.reduce((max, set) => Math.max(max, Number(set.weight) || 0), 0);
   const historyCount = state.history.length;
-  return `<section class="page-intro"><div class="eyebrow">Small steps, real strength</div><h1>Your progress</h1><p>Notice how far you've come.</p></section><div class="metric-grid"><div class="metric-card"><strong>${historyCount}</strong><span>workouts completed</span></div><div class="metric-card"><strong>${best ? `${best} ${state.units}` : "—"}</strong><span>best ${selected ? escapeHtml(selected) : "lift"}</span></div></div><section class="chart-card"><div class="chart-toolbar"><h3>Strength over time</h3>${names.length ? `<select class="select-field" style="width:auto;max-width:55%;min-height:37px;padding:6px 9px" data-change="progress-exercise">${names.map((name) => `<option ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</select>` : ""}</div>${records.length ? renderChart(records) : `<div class="empty-state" style="padding:30px 8px 15px"><h3>Your first PR is waiting</h3><p>Complete a workout to see your lifts build over time.</p><button class="secondary-button" data-tab="Home">Go to today's workout</button></div>`}</section><section class="section"><div class="section-heading"><h2>Workout history</h2><span class="eyebrow">${historyCount} sessions</span></div><div class="history-list">${state.history.length ? state.history.map((workout) => `<details class="history-item"><summary class="history-summary"><div><strong>${escapeHtml(workout.name)}</strong><span>${prettyDate(workout.date, { weekday: "short", month: "short", day: "numeric", year: "numeric" })} · ${workout.exercises.length} exercises</span></div>${icon("arrow")}</summary><div class="history-content">${workout.exercises.map((exercise) => `<div class="history-exercise"><strong>${escapeHtml(exercise.name)}</strong><p>${exercise.sets.map((set) => `${set.weight || 0} ${state.units} × ${set.reps}`).join(" · ")}</p>${exercise.notes ? `<p>${escapeHtml(exercise.notes)}</p>` : ""}</div>`).join("")}<div class="history-actions"><button class="secondary-button" data-action="reopen-workout" data-history-id="${workout.id}" data-resume="1">${icon("history")} Reopen</button><button class="secondary-button destructive-text" data-action="reopen-workout" data-history-id="${workout.id}" data-resume="0">${icon("trash")} Remove</button></div></div></details>`).join("") : `<div class="surface empty-state"><p>Completed workouts will appear here.</p></div>`}</div></section>`;
+  return `<section class="page-intro"><div class="eyebrow">Small steps, real strength</div><h1>Your progress</h1><p>Notice how far you've come.</p></section><div class="metric-grid"><div class="metric-card"><strong>${historyCount}</strong><span>workouts completed</span></div><div class="metric-card"><strong>${best ? `${best} ${state.units}` : "—"}</strong><span>best ${selected ? escapeHtml(selected) : "lift"}</span></div></div><section class="chart-card"><div class="chart-toolbar"><h3>Strength over time</h3>${names.length ? `<select class="select-field" style="width:auto;max-width:55%;min-height:37px;padding:6px 9px" data-change="progress-exercise">${names.map((name) => `<option ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</select>` : ""}</div>${records.length ? renderStrength(records) : `<div class="empty-state" style="padding:30px 8px 15px"><h3>Your first PR is waiting</h3><p>Complete a workout to see your lifts build over time.</p><button class="secondary-button" data-tab="Home">Go to today's workout</button></div>`}</section>${state.history.length ? renderVolume() : ""}<section class="section"><div class="section-heading"><h2>Workout history</h2><span class="eyebrow">${historyCount} sessions</span></div><div class="history-list">${state.history.length ? state.history.map((workout) => `<details class="history-item"><summary class="history-summary"><div><strong>${escapeHtml(workout.name)}</strong><span>${prettyDate(workout.date, { weekday: "short", month: "short", day: "numeric", year: "numeric" })} · ${workout.exercises.length} exercises</span></div>${icon("arrow")}</summary><div class="history-content">${workout.exercises.map((exercise) => `<div class="history-exercise"><strong>${escapeHtml(exercise.name)}</strong><p>${exercise.sets.map((set) => `${set.weight || 0} ${state.units} × ${set.reps}`).join(" · ")}</p>${exercise.notes ? `<p>${escapeHtml(exercise.notes)}</p>` : ""}</div>`).join("")}<div class="history-actions"><button class="secondary-button" data-action="reopen-workout" data-history-id="${workout.id}" data-resume="1">${icon("history")} Reopen</button><button class="secondary-button destructive-text" data-action="reopen-workout" data-history-id="${workout.id}" data-resume="0">${icon("trash")} Remove</button></div></div></details>`).join("") : `<div class="surface empty-state"><p>Completed workouts will appear here.</p></div>`}</div></section>`;
 }
 let progressSelection = "";
 function renderCalendar() {
@@ -1303,18 +1374,74 @@ function renderCalendar() {
   });
   return `<div class="calendar-card"><div class="calendar-grid calendar-weekdays">${["S", "M", "T", "W", "T", "F", "S"].map((day) => `<span>${day}</span>`).join("")}</div><div class="calendar-grid">${cells.join("")}</div></div>`;
 }
-function renderChart(records) {
-  const points = records.reduce((bestByDate, record) => { const prior = bestByDate.at(-1); if (!prior || prior.date !== record.date) bestByDate.push(record); else if (Number(record.weight) > Number(prior.weight)) bestByDate[bestByDate.length - 1] = record; return bestByDate; }, []);
-  if (points.length < 2) return `<div class="empty-state" style="padding:25px 8px 13px"><p>Log this lift in one more workout to see your trend.</p><div class="history-exercise"><strong>${prettyDate(points[0].date)} · ${points[0].weight} ${state.units} × ${points[0].reps}</strong></div></div>`;
-  const weights = points.map((point) => Number(point.weight) || 0);
-  const min = Math.min(...weights) * .88, max = Math.max(...weights) * 1.08 || 1;
-  const coords = points.map((point, index) => ({ x: 30 + index * 270 / (points.length - 1), y: 145 - ((Number(point.weight) - min) / (max - min || 1)) * 115, point }));
-  const path = coords.map(({ x, y }, index) => `${index ? "L" : "M"}${x},${y}`).join(" ");
-  return `<div class="chart-area"><svg viewBox="0 0 310 180" role="img" aria-label="Weight progression chart">${[35, 80, 125, 160].map((y) => `<line class="chart-grid" x1="26" y1="${y}" x2="304" y2="${y}"/>`).join("")}<path class="chart-line" d="${path}"/>${coords.map(({ x, y, point }) => `<circle class="chart-point" cx="${x}" cy="${y}" r="4"><title>${point.weight} ${state.units} on ${prettyDate(point.date)}</title></circle>`).join("")}${coords.filter((_, i) => i === 0 || i === coords.length - 1).map(({ x, point }) => `<text class="chart-label" x="${x}" y="176" text-anchor="middle">${prettyDate(point.date)}</text>`).join("")}</svg></div><div class="eyebrow" style="text-align:right">Best set weight · ${state.units}</div>`;
+// ---------- Progress charts ----------
+let strengthMetric = "e1rm", volumeMetric = "sets";
+const roundHalf = (value) => Math.round(value * 2) / 2;
+// One point per session: the best set by estimated 1-rep max (Epley: weight × (1 + reps / 30)) or by top weight.
+function sessionBests(records, metric) {
+  const byDate = new Map();
+  for (const record of records) {
+    const weight = Number(record.weight) || 0, reps = Number(record.reps) || 0;
+    if (!(weight > 0)) continue;
+    const value = metric === "e1rm" ? weight * (1 + reps / 30) : weight;
+    const prior = byDate.get(record.date);
+    if (!prior || value > prior.value) byDate.set(record.date, { date: record.date, value: roundHalf(value), weight, reps });
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+function lineChart(points, label) {
+  const values = points.map((point) => point.value);
+  const low = Math.min(...values), high = Math.max(...values), pad = Math.max(1, (high - low) * 0.15);
+  const min = Math.max(0, low - pad), max = high + pad;
+  const x = (index) => 40 + (points.length === 1 ? 132 : (index * 264) / (points.length - 1));
+  const y = (value) => 150 - ((value - min) / (max - min || 1)) * 120;
+  const path = points.map((point, index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(point.value).toFixed(1)}`).join(" ");
+  const area = `${path} L${x(points.length - 1).toFixed(1)},150 L${x(0).toFixed(1)},150 Z`;
+  const ticks = [max, (max + min) / 2, min].map((value) => `<text class="chart-label" x="34" y="${(y(value) + 3).toFixed(1)}" text-anchor="end">${Math.round(value)}</text><line class="chart-grid" x1="40" y1="${y(value).toFixed(1)}" x2="304" y2="${y(value).toFixed(1)}"/>`).join("");
+  const dots = points.map((point, index) => `<circle class="chart-point${index === points.length - 1 ? " last" : ""}" cx="${x(index).toFixed(1)}" cy="${y(point.value).toFixed(1)}" r="${index === points.length - 1 ? 5 : 3.5}"><title>${point.value} ${state.units} · ${prettyDate(point.date)} (${point.weight} × ${point.reps})</title></circle>`).join("");
+  const dates = [0, points.length - 1].filter((index, i, all) => all.indexOf(index) === i).map((index) => `<text class="chart-label" x="${x(index).toFixed(1)}" y="172" text-anchor="${points.length === 1 ? "middle" : index ? "end" : "start"}">${prettyDate(points[index].date)}</text>`).join("");
+  return `<div class="chart-area"><svg viewBox="0 0 310 180" role="img" aria-label="${escapeHtml(label)}">${ticks}<path class="chart-fill" d="${area}"/><path class="chart-line" d="${path}"/>${dots}${dates}</svg></div>`;
+}
+function renderStrength(records) {
+  const points = sessionBests(records, strengthMetric);
+  const toggle = `<div class="mini-seg" role="group" aria-label="Strength measure">${[["e1rm", "Est. 1RM"], ["top", "Top set"]].map(([value, label]) => `<button class="mini-seg-option${strengthMetric === value ? " selected" : ""}" data-action="strength-metric" data-metric="${value}" aria-pressed="${strengthMetric === value}">${label}</button>`).join("")}</div>`;
+  if (!points.length) return `${toggle}<div class="empty-state" style="padding:22px 8px 10px"><p>Log this lift with a weight to see your trend.</p></div>`;
+  const first = points[0], last = points.at(-1), best = points.reduce((top, point) => (point.value > top.value ? point : top), first);
+  const change = points.length > 1 && first.value > 0 ? Math.round(((last.value - first.value) / first.value) * 100) : null;
+  const what = strengthMetric === "e1rm" ? "Estimated 1-rep max: what your best set suggests you could lift once." : "Heaviest weight you lifted in each session.";
+  const summary = `<div class="chart-summary"><div><span>Latest</span><strong>${last.value} ${state.units}</strong></div><div><span>Best</span><strong>${best.value} ${state.units}</strong></div><div><span>Change</span><strong class="${change > 0 ? "up" : change < 0 ? "down" : ""}">${change === null ? "—" : `${change > 0 ? "+" : ""}${change}%`}</strong><small>${change === null ? "needs 2 sessions" : `since ${prettyDate(first.date)}`}</small></div></div>`;
+  return `${toggle}${summary}${lineChart(points, `${strengthMetric === "e1rm" ? "Estimated 1-rep max" : "Top set"} over time`)}<p class="chart-note">${what} ${points.length} ${points.length === 1 ? "session" : "sessions"}.</p>`;
+}
+function weeklyVolume(count = 8) {
+  const first = addDays(mondayOf(todayKey()), -7 * (count - 1));
+  const weeks = Array.from({ length: count }, (_, index) => ({ week: addDays(first, 7 * index), sets: 0, load: 0 }));
+  for (const workout of state.history) {
+    const bucket = weeks.find((item) => item.week === mondayOf(workout.date));
+    if (!bucket) continue;
+    for (const exercise of workout.exercises) for (const set of exercise.sets) { bucket.sets += 1; bucket.load += (Number(set.weight) || 0) * (Number(set.reps) || 0); }
+  }
+  return weeks;
+}
+function renderVolume() {
+  const weeks = weeklyVolume();
+  const key = volumeMetric === "load" ? "load" : "sets";
+  const short = (value) => (key === "load" ? (value >= 1000 ? `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k` : Math.round(value)) : value);
+  const top = Math.max(1, ...weeks.map((week) => week[key])) * 1.1;
+  const done = weeks.slice(0, -1).filter((week) => week.sets > 0);
+  const average = done.length ? done.reduce((sum, week) => sum + week[key], 0) / done.length : 0;
+  const bars = weeks.map((week, index) => {
+    const current = index === weeks.length - 1;
+    return `<div class="vol-bar${current ? " current" : ""}" aria-label="Week of ${prettyDate(week.week)}: ${key === "load" ? `${Math.round(week.load)} ${state.units}` : `${week.sets} sets`}"><span class="vol-value">${week[key] ? short(week[key]) : ""}</span><span class="vol-track"><i style="height:${((week[key] / top) * 100).toFixed(1)}%"></i></span><span class="vol-label">${current ? "Now" : prettyDate(week.week, { month: "numeric", day: "numeric" })}</span></div>`;
+  }).join("");
+  const toggle = `<div class="mini-seg" role="group" aria-label="Volume measure">${[["sets", "Sets"], ["load", "Load"]].map(([value, label]) => `<button class="mini-seg-option${key === value ? " selected" : ""}" data-action="volume-metric" data-metric="${value}" aria-pressed="${key === value}">${label}</button>`).join("")}</div>`;
+  const now = weeks.at(-1)[key];
+  const note = key === "load" ? `Load = weight × reps of every logged set (${state.units}).` : "Logged sets per week, all exercises.";
+  const line = average ? `This week ${key === "load" ? `${Math.round(now).toLocaleString("en-US")} ${state.units}` : `${now} sets`} · ${done.length}-week average ${key === "load" ? `${Math.round(average).toLocaleString("en-US")} ${state.units}` : `${Math.round(average)} sets`}` : "Finish a few workouts to see your weekly volume.";
+  return `<section class="chart-card"><div class="chart-toolbar"><h3>Weekly volume</h3>${toggle}</div><p class="chart-headline">${line}</p><div class="vol-bars">${bars}</div><p class="chart-note">${note}</p></section>`;
 }
 function renderProfile() {
   const standalone = nativeApp || window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
-  return `<section class="page-intro profile-intro"><div class="profile-avatar">${escapeHtml((state.name || "H").slice(0, 1).toUpperCase())}</div><div class="profile-intro-text"><div class="eyebrow">Made for your pace</div><button class="profile-name" data-action="edit-name" aria-label="Edit your name"><h1>${escapeHtml(state.name || "Add your name")}</h1><span class="edit-hint" aria-hidden="true">${icon("edit")}</span></button><p>${escapeHtml(state.program.name)}</p></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>About you</strong><small>Shapes recommendations and features</small></div><select class="select-field" data-change="sex" aria-label="About you"><option value="" ${userSex() ? "" : "selected"} disabled>Choose</option>${sexOptions.map(([value, label]) => `<option value="${value}" ${userSex() === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div>${notificationsSupported() ? `<div class="setting-row"><div><strong>Rest timer alerts</strong><small>${state.restAlerts === "on" && Notification.permission !== "granted" ? "Blocked in browser settings" : "Notify when you leave the app during a rest"}</small></div><select class="select-field" data-change="rest-alerts" aria-label="Rest timer alerts"><option value="on" ${restAlertsOn() ? "selected" : ""}>On</option><option value="off" ${restAlertsOn() ? "" : "selected"}>Off</option></select></div>` : ""}<div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section>${renderCycleSettings()}<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Honna</button>`}</section><p class="eyebrow" style="margin:22px 0 6px;text-align:center">Honna · Your workouts, in rhythm</p><p class="privacy-note">Your data stays on this device. <a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a></p>`;
+  return `<section class="page-intro profile-intro"><div class="profile-avatar">${escapeHtml((state.name || "H").slice(0, 1).toUpperCase())}</div><div class="profile-intro-text"><div class="eyebrow">Made for your pace</div><button class="profile-name" data-action="edit-name" aria-label="Edit your name"><h1>${escapeHtml(state.name || "Add your name")}</h1><span class="edit-hint" aria-hidden="true">${icon("edit")}</span></button><p>${escapeHtml(state.program.name)}</p></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>About you</strong><small>Shapes recommendations and features</small></div><select class="select-field" data-change="sex" aria-label="About you"><option value="" ${userSex() ? "" : "selected"} disabled>Choose</option>${sexOptions.map(([value, label]) => `<option value="${value}" ${userSex() === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div>${notificationsSupported() ? `<div class="setting-row"><div><strong>Rest timer alerts</strong><small>${state.restAlerts === "on" && Notification.permission !== "granted" ? "Blocked in browser settings" : "Notify when you leave the app during a rest"}</small></div><select class="select-field" data-change="rest-alerts" aria-label="Rest timer alerts"><option value="on" ${restAlertsOn() ? "selected" : ""}>On</option><option value="off" ${restAlertsOn() ? "" : "selected"}>Off</option></select></div>` : ""}<div class="setting-row"><div><strong>Appearance</strong><small>Dark mode is easier on the eyes in the evening</small></div><select class="select-field" data-change="appearance" aria-label="Appearance">${[["light", "Light"], ["dark", "Dark"], ["auto", "Match phone"]].map(([value, label]) => `<option value="${value}" ${(state.appearance || "light") === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section>${renderCycleSettings()}<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Honna</button>`}</section><p class="eyebrow" style="margin:22px 0 6px;text-align:center">Honna · Your workouts, in rhythm</p><p class="privacy-note">Your data stays on this device. <a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a></p>`;
 }
 function renderOnboarding() {
   app.innerHTML = `<div class="onboarding"><div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual"><svg viewBox="0 0 220 190" fill="none" aria-hidden="true"><path d="M45 146c13-38 26-50 49-50 17 0 23 11 34 11 12 0 17-15 28-15 15 0 21 18 25 54" stroke="#60796c" stroke-width="14" stroke-linecap="round"/><path d="M73 81c-2-14 3-27 17-31 14-4 25 5 26 20 1 16-7 29-20 30-12 0-21-7-23-19Z" fill="#bd7f76"/><path d="M59 147h116" stroke="#40594d" stroke-width="8" stroke-linecap="round"/><circle cx="172" cy="48" r="16" fill="#dfb965"/><path d="m169 48 3 3 6-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="eyebrow">A little stronger, each time</div><h1>Welcome to Honna</h1><p class="onboarding-copy">Your workouts. Your progress. All in one place.</p></div><div><div class="step-dots"><i class="active"></i><i></i><i></i></div><div class="onboarding-actions"><button class="primary-button" data-action="onboarding-next">LET'S GET STARTED ${icon("arrow")}</button><button class="link-button" data-action="use-sample">Explore with a sample plan</button></div></div></div>`;
@@ -1365,10 +1492,81 @@ function renderWorkout() {
   const total = workout.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
   return `<header class="workout-header"><button class="inline-icon-button" data-action="exit-workout" aria-label="Pause workout and go back">‹</button><div><h2>${escapeHtml(workout.name)}</h2><p>${prettyDate(workout.date, { weekday: "long", month: "short", day: "numeric" })}</p></div><button class="link-button" style="margin-left:auto" data-action="finish-workout">Finish</button></header><div class="workout-progress"><div class="workout-progress-label"><span>Your session</span><span>${completed} of ${total} sets</span></div><div class="progress-track"><span style="width:${total ? completed / total * 100 : 0}%"></span></div></div>${workout.restEndsAt ? renderRestTimer() : ""}${workout.exercises.map((exercise, index) => renderLogExercise(exercise, index)).join("")}<button class="secondary-button add-exercise-button" data-action="add-active-exercise">+ &nbsp;Add exercise</button><button class="primary-button finish-button" data-action="finish-workout">FINISH WORKOUT ${icon("check")}</button><button class="link-button discard-workout" data-action="discard-workout">Discard workout</button>`;
 }
+// ---------- Barbell helpers: plate calculator and warm-up sets ----------
+const barbellNames = /barbell|squat|deadlift|bench press|hip thrust|glute bridge|good morning|overhead press|military press|bent.?over row|pendlay|romanian|\brdl\b|power clean|snatch|clean and/i;
+const notBarbellNames = /dumbbell|\bdb\b|machine|smith|cable|goblet|kettlebell|leg press|hack squat|band|bodyweight|split squat|bulgarian|single.?leg/i;
+function usesBarbell(exercise) {
+  const equipment = getExercise(exercise.exerciseId ?? exercise.id, exercise.name)?.equipment || exercise.equipment || "";
+  if (equipment && equipment !== "other") return equipment === "barbell";
+  return barbellNames.test(exercise.name) && !notBarbellNames.test(exercise.name);
+}
+const plateSizes = { kg: [25, 20, 15, 10, 5, 2.5, 1.25], lbs: [45, 35, 25, 10, 5, 2.5] };
+const barSizes = { kg: [20, 15, 10], lbs: [45, 35, 25] };
+function unitsKey() { return state.units === "lbs" ? "lbs" : "kg"; }
+function barWeight() {
+  const options = barSizes[unitsKey()];
+  const saved = Number(state.plateBar?.[unitsKey()]);
+  return options.includes(saved) ? saved : options[0];
+}
+// Plates for one side of the bar, biggest first. Anything that can't be made exactly is reported, never rounded silently.
+function platesFor(total, bar = barWeight()) {
+  let left = Math.round(((total - bar) / 2) * 1000) / 1000;
+  const plates = [];
+  if (left > 0) for (const plate of plateSizes[unitsKey()]) while (left >= plate - 1e-9) { plates.push(plate); left = Math.round((left - plate) * 1000) / 1000; }
+  const loaded = bar + 2 * plates.reduce((sum, plate) => sum + plate, 0);
+  return { plates, loaded: Math.round(loaded * 100) / 100, exact: Math.abs(loaded - total) < 1e-6, belowBar: total < bar };
+}
+const formatWeight = (value) => `${Math.round(value * 100) / 100} ${state.units}`;
+function renderPlates(total) {
+  const bar = barWeight();
+  if (!(total > 0)) return `<p class="muted-copy">Enter a weight to see the plates.</p>`;
+  const result = platesFor(total, bar);
+  if (result.belowBar) return `<p class="muted-copy">${formatWeight(total)} is lighter than the ${formatWeight(bar)} bar.</p>`;
+  const largest = plateSizes[unitsKey()][0];
+  const visual = `<div class="plate-visual" aria-hidden="true"><span class="plate-shaft"></span><span class="plate-collar"></span>${result.plates.map((plate) => `<i class="plate plate-${String(plate).replace(".", "_")}" style="height:${Math.round(38 + (plate / largest) * 62)}%"></i>`).join("")}<span class="plate-sleeve"></span></div><div class="plate-caption"><span>middle of the bar</span><span>one side</span></div>`;
+  const list = result.plates.length ? result.plates.join(" + ") : "No plates: just the bar";
+  const note = result.exact ? "" : `<p class="plate-note">${formatWeight(total)} can't be loaded exactly with standard plates. Closest: ${formatWeight(result.loaded)}.</p>`;
+  return `${visual}<div class="plate-summary"><span class="field-label">Each side</span><strong>${list}</strong><small>${formatWeight(bar)} bar + ${formatWeight(result.loaded - bar)} in plates = ${formatWeight(result.loaded)}</small></div>${note}`;
+}
+let plateTarget = 0;
+function showPlateCalculator(exerciseIndex) {
+  const exercise = state.activeWorkout?.exercises[exerciseIndex];
+  if (!exercise) return;
+  const next = exercise.sets.find((set) => !set.complete) || exercise.sets.at(-1);
+  plateTarget = Number(next?.weight) || 0;
+  const bars = barSizes[unitsKey()].map((size) => `<button class="flow-option${size === barWeight() ? " selected" : ""}" data-action="plate-bar" data-bar="${size}">${size} ${state.units}</button>`).join("");
+  showSheet("Plate calculator", escapeHtml(exercise.name), `<label class="field"><span class="field-label">Total weight</span><input class="number-field" type="text" inputmode="decimal" id="plate-weight" value="${plateTarget || ""}" autocomplete="off"></label><div class="field-label" style="margin-top:12px">Bar</div><div class="flow-options plate-bars">${bars}</div><div id="plate-result" class="plate-result">${renderPlates(plateTarget)}</div>`, `<button class="primary-button" data-action="close-sheet">DONE</button>`);
+  document.querySelector("#plate-weight")?.addEventListener("input", (event) => {
+    plateTarget = Number(String(event.target.value).replace(",", ".")) || 0;
+    document.querySelector("#plate-result").innerHTML = renderPlates(plateTarget);
+  });
+}
+// Warm-up for the first barbell lift of a session: the empty bar, then about 40%, 60% and 80% of the working weight.
+function warmupSets(working, bar = barWeight()) {
+  const step = state.units === "lbs" ? 5 : 2.5;
+  if (!(working >= bar * 1.5)) return [];
+  const sets = [{ weight: bar, reps: 10 }];
+  for (const [share, reps] of [[0.4, 8], [0.6, 5], [0.8, 3]]) {
+    const weight = Math.max(bar, Math.round((working * share) / step) * step);
+    if (weight > sets.at(-1).weight && weight < working) sets.push({ weight, reps });
+  }
+  return sets;
+}
+const warmupOpen = new Set();
+function renderLogTools(exercise, exerciseIndex) {
+  if (!usesBarbell(exercise)) return "";
+  const firstBarbell = state.activeWorkout.exercises.findIndex((item) => usesBarbell(item)) === exerciseIndex;
+  const working = Math.max(0, ...exercise.sets.map((set) => Number(set.weight) || 0));
+  const warmup = firstBarbell ? warmupSets(working) : [];
+  const key = `${state.activeWorkout.id}:${exerciseIndex}`;
+  const open = warmup.length && warmupOpen.has(key);
+  const list = open ? `<div class="warmup-list"><div class="field-label">Suggested warm-up · not logged</div><ol>${warmup.map((set) => `<li><strong>${formatWeight(set.weight)}</strong> × ${set.reps}${set.weight === barWeight() ? " <small>(empty bar)</small>" : ""}</li>`).join("")}</ol><small>Then start your working sets at ${formatWeight(working)}.</small></div>` : "";
+  return `<div class="log-tools"><button class="tool-chip" data-action="plate-calc" data-exercise-index="${exerciseIndex}">Plates</button>${warmup.length ? `<button class="tool-chip${open ? " selected" : ""}" data-action="toggle-warmup" data-exercise-index="${exerciseIndex}" aria-expanded="${Boolean(open)}">Warm-up ${open ? "▴" : "▾"}</button>` : ""}</div>${list}`;
+}
 function renderLogExercise(exercise, exerciseIndex) {
   const previous = previousExercise({ id: exercise.exerciseId, name: exercise.name });
   const prevText = previous ? `Last time: ${previous.sets.at(-1).weight || 0} ${state.units} × ${previous.sets.at(-1).reps}` : "Your first time with this lift";
-  return `<section class="log-card"><div class="log-title-row"><div><h3>${String(exerciseIndex + 1).padStart(2, "0")} &nbsp;${escapeHtml(exercise.name)}</h3><p>Target: ${exercise.targetSets} × ${exercise.targetReps || "—"}${exercise.notes ? ` · ${escapeHtml(exercise.notes)}` : ""}</p></div><div class="log-actions"><button class="inline-icon-button" data-action="replace-active-exercise" data-exercise-index="${exerciseIndex}" aria-label="Replace ${escapeHtml(exercise.name)}" title="Find a similar movement">${icon("swap")}</button><button class="inline-icon-button" data-action="exercise-note" data-exercise-index="${exerciseIndex}" aria-label="Add a note">${icon("edit")}</button><button class="inline-icon-button destructive-icon" data-action="remove-active-exercise" data-exercise-index="${exerciseIndex}" aria-label="Remove ${escapeHtml(exercise.name)} from this session" title="Remove from this session">${icon("trash")}</button></div></div><div class="previous-line">${escapeHtml(prevText)}</div>${exercise.sets.map((set, setIndex) => renderSetLine(exerciseIndex, setIndex, set)).join("")}<div class="log-card-actions"><button class="add-set" data-action="add-set" data-exercise-index="${exerciseIndex}">+ Add set</button>${exercise.sets.some((set) => !set.complete) ? `<button class="complete-all" data-action="complete-all-sets" data-exercise-index="${exerciseIndex}">${icon("check")} All sets done</button>` : ""}</div></section>`;
+  return `<section class="log-card"><div class="log-title-row"><div><h3>${String(exerciseIndex + 1).padStart(2, "0")} &nbsp;${escapeHtml(exercise.name)}</h3><p>Target: ${exercise.targetSets} × ${exercise.targetReps || "—"}${exercise.notes ? ` · ${escapeHtml(exercise.notes)}` : ""}</p></div><div class="log-actions"><button class="inline-icon-button" data-action="replace-active-exercise" data-exercise-index="${exerciseIndex}" aria-label="Replace ${escapeHtml(exercise.name)}" title="Find a similar movement">${icon("swap")}</button><button class="inline-icon-button" data-action="exercise-note" data-exercise-index="${exerciseIndex}" aria-label="Add a note">${icon("edit")}</button><button class="inline-icon-button destructive-icon" data-action="remove-active-exercise" data-exercise-index="${exerciseIndex}" aria-label="Remove ${escapeHtml(exercise.name)} from this session" title="Remove from this session">${icon("trash")}</button></div></div><div class="previous-line">${escapeHtml(prevText)}</div>${renderLogTools(exercise, exerciseIndex)}${exercise.sets.map((set, setIndex) => renderSetLine(exerciseIndex, setIndex, set)).join("")}<div class="log-card-actions"><button class="add-set" data-action="add-set" data-exercise-index="${exerciseIndex}">+ Add set</button>${exercise.sets.some((set) => !set.complete) ? `<button class="complete-all" data-action="complete-all-sets" data-exercise-index="${exerciseIndex}">${icon("check")} All sets done</button>` : ""}</div></section>`;
 }
 function renderSetLine(exerciseIndex, setIndex, set) {
   return `<div class="set-line ${set.complete ? "complete" : ""}"><div class="set-heading"><span>Set ${setIndex + 1}</span><div class="set-heading-actions">${state.activeWorkout.exercises[exerciseIndex].sets.length > 1 ? `<button class="set-delete" data-action="delete-set" data-exercise-index="${exerciseIndex}" data-set-index="${setIndex}" aria-label="Delete set ${setIndex + 1}" title="Delete this set">×</button>` : ""}<button class="set-done" data-action="complete-set" data-exercise-index="${exerciseIndex}" data-set-index="${setIndex}" aria-label="${set.complete ? "Mark set incomplete" : "Complete set"}">${icon("check")}</button></div></div><div class="counter-row">${counterMarkup("weight", exerciseIndex, setIndex, set.weight, `${state.units}`, state.weightStep)}${counterMarkup("reps", exerciseIndex, setIndex, set.reps, "reps", 1)}</div></div>`;
@@ -2786,6 +2984,7 @@ function bindSelects() {
     if (select.dataset.change === "weight-step") state.weightStep = Number(select.value);
     if (select.dataset.change === "toggle-wellbeing") { wellbeing().enabled = select.value === "on"; toast(select.value === "on" ? "Wellbeing tracking is on. Check in from Home." : "Wellbeing tracking is off. Your past logs are kept."); }
     if (select.dataset.change === "toggle-tip") state.tipOfDay = select.value === "on";
+    if (select.dataset.change === "appearance") state.appearance = ["light", "dark", "auto"].includes(select.value) ? select.value : "light";
     if (select.dataset.change === "act-celebrate") activity().celebrate = select.value === "on";
     if (select.dataset.change === "act-streak") activity().streak = select.value === "on";
     if (select.dataset.change === "act-demo") { activity().demo = select.value === "on"; if (activity().demo) toast("Demo mode: sample numbers, not your activity."); }
@@ -2840,6 +3039,18 @@ document.addEventListener("click", (event) => {
   else if (action === "set-flow") { setPeriodDay(button.dataset.date, button.dataset.flow); save(); render(); showCycleView(); toast(button.dataset.flow ? `${flowOptions.find(([value]) => value === button.dataset.flow)[1]} logged for ${prettyDate(button.dataset.date)}.` : `Cleared ${prettyDate(button.dataset.date)}.`); }
   else if (action === "cycle-details") showCycleView();
   else if (action === "research-library") showResearchLibrary();
+  else if (action === "strength-metric") { strengthMetric = button.dataset.metric === "top" ? "top" : "e1rm"; render(); }
+  else if (action === "volume-metric") { volumeMetric = button.dataset.metric === "load" ? "load" : "sets"; render(); }
+  else if (action === "plate-calc") showPlateCalculator(Number(button.dataset.exerciseIndex));
+  else if (action === "plate-bar") {
+    state.plateBar = { ...(state.plateBar || {}), [unitsKey()]: Number(button.dataset.bar) }; save();
+    document.querySelectorAll("[data-action=plate-bar]").forEach((item) => item.classList.toggle("selected", item === button));
+    document.querySelector("#plate-result").innerHTML = renderPlates(plateTarget);
+  }
+  else if (action === "toggle-warmup") { const key = `${state.activeWorkout.id}:${button.dataset.exerciseIndex}`; if (warmupOpen.has(key)) warmupOpen.delete(key); else warmupOpen.add(key); render(); }
+  else if (action === "deload-start") { state.deload = { ...(state.deload || {}), start: todayKey(), end: addDays(todayKey(), 6), snoozeUntil: "" }; save(); render(); toast("Lighter week planned until next " + prettyDate(addDays(todayKey(), 6), { weekday: "long" }) + ". Your plan is unchanged."); }
+  else if (action === "deload-snooze") { state.deload = { ...(state.deload || {}), snoozeUntil: addDays(todayKey(), 14) }; save(); render(); toast("Okay. Honna won't ask again for two weeks."); }
+  else if (action === "deload-end") { state.deload = { ...(state.deload || {}), end: addDays(todayKey(), -1) }; save(); render(); toast("Lighter week ended."); }
   else if (action === "activity-enable") { activity().enabled = true; save(); render(); toast("Activity is on. Connect your health app or add your steps."); }
   else if (action === "activity-connect") showHealthApp(button.dataset.app);
   else if (action === "activity-connect-go") connectHealthApp(button.dataset.app);
