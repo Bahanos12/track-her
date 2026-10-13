@@ -1029,8 +1029,11 @@ function renderFoodPane() {
     return renderFoodList(foods, foodTab === "recent" ? "Foods you add will show up here." : "Tap ☆ on a food to keep it here.");
   }
   if (foodTab === "mine") {
-    const custom = Object.values(data.foods).filter((food) => food.source === "custom");
-    return `${renderFoodList(custom, "No foods of your own yet.")}<button class="secondary-button" data-action="food-custom" style="margin-top:10px">+ Create a food</button>`;
+    const custom = Object.values(data.foods).filter((food) => food.source === "custom").sort((a, b) => a.name.localeCompare(b.name));
+    const start = foodPickList.length;
+    foodPickList.push(...custom);
+    const list = custom.length ? `<div class="food-results">${custom.map((food, index) => `<div class="food-row-edit">${foodRow(food, start + index)}<button class="inline-icon-button food-edit-button" data-action="food-custom-edit" data-id="${escapeHtml(food.id)}" aria-label="Edit ${escapeHtml(food.name)}">${icon("edit")}</button></div>`).join("")}</div>` : `<p class="muted-copy">No foods of your own yet.</p>`;
+    return `${list}<button class="secondary-button" data-action="food-custom" style="margin-top:10px">+ Create a food</button>`;
   }
   const local = ciqualFoods && foodQuery ? searchCiqual(ciqualFoods, foodQuery) : [];
   const localBlock = foodQuery ? (ciqualFoods ? renderFoodList(local, "No basic foods match. Try the packaged search below.") : `<p class="muted-copy">Loading foods…</p>`) : `<p class="muted-copy">Search basic foods like "chicken breast", "oat flakes" or "banana". French names work too.</p>`;
@@ -1129,8 +1132,14 @@ function toggleFavoriteFood() {
   const button = document.querySelector("[data-action=food-favorite]");
   if (button) { button.classList.toggle("on", !on); button.innerHTML = `${icon("star")} ${on ? "Add to favourites" : "In favourites"}`; }
 }
-function showCustomFood() {
-  showSheet("Create a food", "Values per 100 g, from the label.", `<label class="field"><span class="field-label">Name</span><input class="text-field" id="cf-name" maxlength="60" placeholder="e.g. Mum's lasagne"></label><div class="counter-row"><label class="field"><span class="field-label">Calories (kcal)</span><input class="number-field" id="cf-kcal" type="text" inputmode="decimal"></label><label class="field"><span class="field-label">Protein (g)</span><input class="number-field" id="cf-protein" type="text" inputmode="decimal"></label></div><div class="counter-row"><label class="field"><span class="field-label">Carbs (g)</span><input class="number-field" id="cf-carbs" type="text" inputmode="decimal"></label><label class="field"><span class="field-label">Fat (g)</span><input class="number-field" id="cf-fat" type="text" inputmode="decimal"></label></div><label class="field"><span class="field-label">Usual portion (g) <small>optional</small></span><input class="number-field" id="cf-serving" type="text" inputmode="decimal"></label>`, `<button class="secondary-button" data-action="food-back">Back</button><button class="primary-button" data-action="food-custom-save">SAVE</button>`);
+let customFoodEditId = null;
+function showCustomFood(food = null) {
+  customFoodEditId = food?.id || null;
+  const per = food?.per100 || {};
+  const value = (number) => (number === null || number === undefined ? "" : number);
+  const used = food ? Object.values(nutrition().logs).flat().filter((entry) => entry.foodId === food.id).length : 0;
+  const update = used ? `<label class="check-field"><input type="checkbox" id="cf-update" checked><span>Also update the ${used} ${used === 1 ? "entry" : "entries"} already logged with this food</span></label>` : "";
+  showSheet(food ? "Edit food" : "Create a food", "Values per 100 g, from the label.", `<label class="field"><span class="field-label">Name</span><input class="text-field" id="cf-name" maxlength="60" placeholder="e.g. Mum's lasagne" value="${escapeHtml(food?.name || "")}"></label><div class="counter-row"><label class="field"><span class="field-label">Calories (kcal)</span><input class="number-field" id="cf-kcal" type="text" inputmode="decimal" value="${value(per.kcal)}"></label><label class="field"><span class="field-label">Protein (g)</span><input class="number-field" id="cf-protein" type="text" inputmode="decimal" value="${value(per.protein)}"></label></div><div class="counter-row"><label class="field"><span class="field-label">Carbs (g)</span><input class="number-field" id="cf-carbs" type="text" inputmode="decimal" value="${value(per.carbs)}"></label><label class="field"><span class="field-label">Fat (g)</span><input class="number-field" id="cf-fat" type="text" inputmode="decimal" value="${value(per.fat)}"></label></div><label class="field"><span class="field-label">Usual portion (g) <small>optional</small></span><input class="number-field" id="cf-serving" type="text" inputmode="decimal" value="${value(food?.serving?.grams)}"></label>${update}`, food ? `<button class="danger-button" data-action="food-custom-delete">Delete</button><button class="primary-button" data-action="food-custom-save">SAVE</button>` : `<button class="secondary-button" data-action="food-back">Back</button><button class="primary-button" data-action="food-custom-save">SAVE</button>`);
 }
 function saveCustomFood() {
   const name = document.querySelector("#cf-name")?.value.trim();
@@ -1140,9 +1149,36 @@ function saveCustomFood() {
   if (Object.values(per100).some(Number.isNaN)) { toast("Use numbers only, like 12.5."); return; }
   if (per100.kcal === null && per100.protein === null) { toast("Add at least calories or protein."); return; }
   const serving = parseAmount(document.querySelector("#cf-serving")?.value);
-  const food = { id: `custom:${uid()}`, name, brand: "", source: "custom", per100, serving: serving ? { grams: serving, label: `${serving} g` } : null };
-  rememberFood(food); save();
+  const editing = customFoodEditId && nutrition().foods[customFoodEditId];
+  const food = { id: editing ? customFoodEditId : `custom:${uid()}`, name, brand: "", source: "custom", per100, serving: serving ? { grams: serving, label: `${serving} g` } : null };
+  rememberFood(food);
+  if (editing) {
+    // Entries keep their own numbers unless you choose to update them.
+    let updated = 0;
+    if (document.querySelector("#cf-update")?.checked) {
+      for (const entry of Object.values(nutrition().logs).flat()) {
+        if (entry.foodId !== food.id) continue;
+        Object.assign(entry, { name: food.name, ...amountOf(food, entry.grams) });
+        updated += 1;
+      }
+    }
+    save(); customFoodEditId = null;
+    foodTab = "mine"; showFoodAdd(foodMeal); render();
+    toast(updated ? `Saved. ${updated} logged ${updated === 1 ? "entry" : "entries"} updated.` : "Saved.");
+    return;
+  }
+  save();
   showFoodAmount(food);
+}
+function deleteCustomFood() {
+  const data = nutrition(), id = customFoodEditId;
+  if (!id || !data.foods[id]) return;
+  delete data.foods[id];
+  data.recents = data.recents.filter((item) => item !== id);
+  data.favorites = data.favorites.filter((item) => item !== id);
+  customFoodEditId = null; save();
+  foodTab = "mine"; showFoodAdd(foodMeal);
+  toast("Food deleted. Entries you already logged stay.");
 }
 async function lookupAndShow(code) {
   const clean = String(code || "").replace(/\D/g, "");
@@ -3356,6 +3392,8 @@ document.addEventListener("click", (event) => {
   else if (action === "food-edit") { const entry = foodEntries(foodDay()).find((item) => item.id === button.dataset.id); if (entry) { foodMeal = entry.meal; showFoodAmount(nutrition().foods[entry.foodId] || { id: entry.foodId, name: entry.name, brand: entry.brand, source: "custom", per100: { kcal: entry.kcal * 100 / entry.grams, protein: entry.protein * 100 / entry.grams, carbs: entry.carbs * 100 / entry.grams, fat: entry.fat * 100 / entry.grams } }, entry); } }
   else if (action === "food-custom") showCustomFood();
   else if (action === "food-custom-save") saveCustomFood();
+  else if (action === "food-custom-edit") { const food = nutrition().foods[button.dataset.id]; if (food) showCustomFood(food); }
+  else if (action === "food-custom-delete") deleteCustomFood();
   else if (action === "food-scan") startScan();
   else if (action === "food-barcode") lookupAndShow(document.querySelector("#food-barcode")?.value);
   else if (action === "food-goals") showFoodGoals();

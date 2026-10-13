@@ -475,3 +475,4 @@ body::before { content: ""; position: fixed; z-index: 40; top: 0; left: 0; right
 .protein-helper { display: grid; gap: 6px; margin: 4px 0 10px; padding: 10px 12px; border-radius: 10px; background: var(--tint-bg); font-size: 12px; }
 .protein-helper > span { font-weight: 700; }
 .protein-helper small { color: var(--muted); line-height: 1.45; }
+.food-row-edit { display: flex; align-items: center; border-bottom: 1px solid var(--divider); background: var(--card); }.food-row-edit:last-child { border-bottom: 0; }.food-row-edit .food-result { flex: 1; min-width: 0; border-bottom: 0; }.food-edit-button { flex: 0 0 auto; margin-right: 8px; }
