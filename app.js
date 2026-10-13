@@ -18,6 +18,9 @@ const iconPaths = {
   swap: '<path d="m16 3 4 4-4 4M20 7H4m4 14-4-4 4-4m-4 4h16"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2m-10 0 1 14h10l1-14M10 11v5m4-5v5"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  food: '<path d="M7 3v8M4 3v5a3 3 0 0 0 6 0V3M7 11v10M17 21V3c-2.5 1.5-4 4.5-4 8h4"/>',
+  scan: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 9v6M10 9v6M13 9v6M17 9v6"/>',
+  star: '<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
   route: '<circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h7.5a3.5 3.5 0 0 0 0-7h-7a3.5 3.5 0 0 1 0-7H16"/>',
   flame: '<path d="M12 22c4 0 7-2.8 7-6.8 0-3.4-2.2-5.6-4-7.7-.6 1.8-1.6 2.9-2.8 3.3.3-3.5-1.3-6.6-4.2-8.8.2 3.5-3 6.2-3 10.4C5 18.8 8 22 12 22Z"/>',
   activity: '<path d="M6 21c-1.7 0-2.5-1.3-2.5-3.2C3.5 14.5 4.6 11 6.6 11c1.6 0 2.3 1.9 2.3 4.4S8.2 21 6 21Z"/><path d="M15.5 13c-1.7 0-2.5-1.3-2.5-3.2C13 6.5 14.1 3 16.1 3c1.6 0 2.3 1.9 2.3 4.4S17.7 13 15.5 13Z"/><path d="M4.2 17.5h4.3M13.7 9.5H18"/>',
@@ -63,6 +66,9 @@ const defaultState = () => ({
   readinessSuggestions: undefined, // undefined = not chosen yet (follows cycle tracking for older saves)
   // Optional activity tracking. days: { "YYYY-MM-DD": { steps, distanceKm, source: "manual" | "apple-health" | "health-connect", updatedAt } }
   // source = the connected health app ("" = none). Demo numbers are generated on screen and never stored here.
+  // Optional food tracking. logs: { "YYYY-MM-DD": [{ id, foodId, name, brand, grams, meal, kcal, protein, carbs, fat, at }] }
+  // (each entry keeps its own numbers, so later food edits never change past days). foods: foods used before (recent/favourite/custom).
+  nutrition: { enabled: false, goals: { kcal: null, protein: null, carbs: null, fat: null }, showCalories: true, logs: {}, foods: {}, recents: [], favorites: [] },
   activity: { enabled: false, goal: 8000, source: "", days: {}, celebrate: true, streak: true, demo: false, celebratedOn: "", view: "day", lastSync: 0 },
   // periodDays: { "YYYY-MM-DD": "spotting" | "light" | "medium" | "heavy" }
   menstrual: { asked: false, enabled: false, periodStarts: [], periodDays: {}, cycleLength: null, periodLength: 5, regularity: "unknown", contraception: "", checkins: [], dismissedInsights: {} },
@@ -791,6 +797,7 @@ const researchSources = {
   colenso2023: { cite: "Colenso-Semple et al. 2023 · Front Sports Act Living (umbrella review)", url: "https://www.frontiersin.org/articles/10.3389/fspor.2023.1054542" },
   elliottsale2020: { cite: "Elliott-Sale et al. 2020 · Sports Medicine (meta-analysis)", url: "https://nrl.northumbria.ac.uk/id/eprint/43772" },
   armour2019: { cite: "Armour et al. 2019 · Cochrane review (12 trials)", url: "https://www.cochrane.org/CD004142" },
+  morton2018: { cite: "Morton et al. 2018 · Br J Sports Med (meta-analysis, 49 studies)", url: "https://bjsm.bmj.com/content/52/6/376" },
   bruinvels2016: { cite: "Bruinvels et al. 2016 · PLoS ONE", url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC4763330/" },
 };
 const researchLibrary = [
@@ -798,6 +805,7 @@ const researchLibrary = [
   { topic: "Effort", title: "Close to failure for muscle, heavier loads for strength", text: "Muscle growth improves as sets end closer to failure (0–3 reps left). Strength depends more on lifting heavy loads than on how close to failure you go.", source: "robinson2024" },
   { topic: "Effort", title: "Rate your sets by reps in reserve", text: "After a set, ask: how many more good reps could I have done? \"2 left\" is a reliable guide, and it lets you adjust weights on good and bad days instead of forcing the plan.", source: "helms2016" },
   { topic: "Volume", title: "Aim for about 10+ hard sets per muscle per week", text: "Muscle growth rose with weekly sets: 10 or more sets per muscle per week beat 5–9, which beat fewer than 5. Start near 10 and add sets only if you recover well.", source: "schoenfeld2017" },
+  { topic: "Nutrition", title: "About 1.6 g of protein per kg is enough for most", text: "With resistance training, extra protein helped muscle growth up to about 1.6 g per kg of body weight a day; above that, gains levelled off. Up to 2.2 g/kg covers almost everyone. Spread it over your meals.", source: "morton2018" },
   { topic: "Recovery", title: "Plan a lighter week now and then", text: "Coaches agree on deloads: a short period (often about a week) of fewer sets and/or lighter weights every 4–8 weeks of hard training, or when fatigue builds up.", source: "bell2023" },
   { topic: "Recovery", title: "Sleep is part of training", text: "One short night lowered performance by about 7–8% on average, more with each extra hour awake before training. After a bad night, train earlier if you can, keep 2–3 reps in reserve and skip max attempts.", source: "craven2022" },
   { topic: "Recovery", title: "Life stress slows recovery", text: "People under high ongoing stress recovered strength and energy more slowly over the 4 days after hard training. In stressful weeks, leave more time before training the same muscles hard again.", source: "stults2014" },
@@ -918,6 +926,305 @@ function beginCheckedWorkout(choice, suggestion = readinessSuggestion()) {
   applyAdaptation(choice);
   save(); render();
   if (choice !== "normal") toast(choice === "light" ? "Lighter session ready. Your plan is unchanged." : "Adapted workout ready. Your plan is unchanged.");
+}
+// ---------- Food: calories, protein, carbs, fat ----------
+// Basic foods come from the ANSES Ciqual 2025 table bundled with Honna (works offline, nothing sent anywhere).
+// Packaged foods come from Open Food Facts (barcode or online search): only the barcode or search words are sent.
+const mealTypes = [["breakfast", "Breakfast"], ["lunch", "Lunch"], ["dinner", "Dinner"], ["snacks", "Snacks"]];
+const macroKeys = [["protein", "Protein"], ["carbs", "Carbs"], ["fat", "Fat"]];
+function nutrition() {
+  if (!state.nutrition || typeof state.nutrition !== "object") state.nutrition = {};
+  for (const [key, value] of Object.entries(defaultState().nutrition)) if (state.nutrition[key] === undefined) state.nutrition[key] = value;
+  if (!state.nutrition.goals || typeof state.nutrition.goals !== "object") state.nutrition.goals = { ...defaultState().nutrition.goals };
+  return state.nutrition;
+}
+let foodDate = null;
+const foodDay = () => (foodDate && foodDate <= todayKey() ? foodDate : todayKey());
+const foodEntries = (date) => nutrition().logs[date] || [];
+function foodTotals(date) {
+  const totals = { kcal: 0, protein: 0, carbs: 0, fat: 0 };
+  for (const entry of foodEntries(date)) for (const key of Object.keys(totals)) totals[key] += Number(entry[key]) || 0;
+  return totals;
+}
+const gramsText = (value) => `${value >= 10 || value === 0 ? Math.round(value) : Math.round(value * 10) / 10} g`;
+const kcalText = (value) => `${Math.round(value).toLocaleString("en-US")} kcal`;
+function amountOf(food, grams) {
+  const factor = (Number(grams) || 0) / 100, per = food.per100 || {};
+  const part = (value) => (value === null || value === undefined ? 0 : Math.round(Number(value) * factor * 10) / 10);
+  return { kcal: Math.round((Number(per.kcal) || 0) * factor), protein: part(per.protein), carbs: part(per.carbs), fat: part(per.fat) };
+}
+const normalizeText = (text) => String(text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+let ciqualFoods = null;
+async function loadCiqual() {
+  if (ciqualFoods) return ciqualFoods;
+  const response = await fetch("data/ciqual-2025.json");
+  if (!response.ok) throw new Error("Food list unavailable");
+  const data = await response.json();
+  ciqualFoods = data.foods.map(([code, name, nameFr, kcal, protein, carbs, fat, group]) => ({ id: `ciqual:${code}`, name, nameFr, source: "ciqual", group, per100: { kcal, protein, carbs, fat }, key: normalizeText(`${name} ${nameFr}`), first: [normalizeText(name), normalizeText(nameFr)] }));
+  return ciqualFoods;
+}
+// Every word must match; foods whose name starts with the search come first, then shorter (simpler) names.
+function searchCiqual(foods, query) {
+  const words = normalizeText(query).split(/[^a-z0-9]+/).filter((word) => word.length > 1);
+  if (!words.length) return [];
+  return foods.filter((food) => words.every((word) => food.key.includes(word)))
+    .map((food) => ({ food, score: (food.first.some((name) => name.startsWith(words[0])) ? 10 : 0) + (food.first.some((name) => new RegExp(`(^|[^a-z])${words[0]}`).test(name)) ? 4 : 0) + (/\b(raw|cru|crue)\b/.test(food.key) ? 1 : 0) - food.name.length / 40 }))
+    .sort((a, b) => b.score - a.score).slice(0, 30).map((item) => item.food);
+}
+function offFood(product) {
+  const n = product.nutriments || {};
+  const value = (key) => (n[key] === undefined || n[key] === "" ? null : Math.round(Number(n[key]) * 10) / 10);
+  const kcal = value("energy-kcal_100g") ?? (n.energy_100g ? Math.round(Number(n.energy_100g) / 4.184) : null);
+  const brand = (Array.isArray(product.brands) ? product.brands.join(",") : String(product.brands || "")).split(",")[0].trim();
+  const servingGrams = Number(product.serving_quantity) || null;
+  return { id: `off:${product.code}`, barcode: String(product.code || ""), name: String(product.product_name || "").trim() || "Unnamed product", brand, source: "off", per100: { kcal, protein: value("proteins_100g"), carbs: value("carbohydrates_100g"), fat: value("fat_100g") }, serving: servingGrams ? { grams: servingGrams, label: String(product.serving_size || `${servingGrams} g`) } : null };
+}
+async function fetchJson(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`Server answered ${response.status}`);
+    return await response.json();
+  } finally { clearTimeout(timer); }
+}
+const offFields = "code,product_name,brands,nutriments,serving_quantity,serving_size";
+async function lookupBarcode(code) {
+  const data = await fetchJson(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=${offFields}`);
+  return data?.status === 1 && data.product ? offFood({ ...data.product, code: data.product.code || code }) : null;
+}
+async function searchPackaged(query) {
+  const data = await fetchJson(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=24&fields=${offFields}`);
+  return (data?.products || []).map(offFood).filter((food) => food.per100.kcal !== null && food.name !== "Unnamed product");
+}
+// Foods shown in the add sheet are kept here; buttons refer to them by position.
+let foodPickList = [], foodMeal = "breakfast", foodTab = "search", foodQuery = "", packagedResults = null, packagedState = "";
+function rememberFood(food) {
+  const data = nutrition();
+  data.foods[food.id] = { id: food.id, name: food.name, nameFr: food.nameFr, brand: food.brand || "", source: food.source, barcode: food.barcode, per100: food.per100, serving: food.serving || null };
+}
+function foodRow(food, index) {
+  const per = food.per100 || {};
+  const show = nutrition().showCalories;
+  const facts = [show && per.kcal !== null && per.kcal !== undefined ? `${Math.round(per.kcal)} kcal` : "", per.protein !== null && per.protein !== undefined ? `${per.protein} g protein` : ""].filter(Boolean).join(" · ");
+  return `<button class="food-result" data-action="food-pick" data-index="${index}"><span><strong>${escapeHtml(food.name)}</strong><small>${escapeHtml([food.brand, facts ? `${facts} per 100 g` : "No nutrition data"].filter(Boolean).join(" · "))}</small></span><span class="food-add-icon" aria-hidden="true">+</span></button>`;
+}
+function renderFoodList(foods, empty) {
+  const start = foodPickList.length;
+  foodPickList.push(...foods);
+  return foods.length ? `<div class="food-results">${foods.map((food, index) => foodRow(food, start + index)).join("")}</div>` : `<p class="muted-copy">${empty}</p>`;
+}
+// Native plugins are listed in Capacitor.PluginHeaders (the page doesn't load @capacitor/core).
+const nativePlugin = (name) => nativeApp && (window.Capacitor?.PluginHeaders || []).some((plugin) => plugin.name === name);
+function barcodeScanAvailable() { return nativePlugin("BarcodeScanner") || "BarcodeDetector" in window; }
+function renderFoodPane() {
+  foodPickList = [];
+  const data = nutrition();
+  if (foodTab === "scan") {
+    return `${barcodeScanAvailable() ? `<button class="primary-button scan-button" data-action="food-scan">${icon("scan")} &nbsp;SCAN A BARCODE</button><div id="scan-view"></div>` : `<p class="muted-copy">This browser can't scan with the camera. Type the barcode numbers instead.</p>`}<label class="field" style="margin-top:12px"><span class="field-label">Barcode</span><div class="food-search-row"><input class="text-field" id="food-barcode" inputmode="numeric" autocomplete="off" placeholder="e.g. 3017620422003"><button class="secondary-button" data-action="food-barcode">Look up</button></div></label><div id="barcode-result"></div><p class="food-source">Barcodes are looked up on Open Food Facts.</p>`;
+  }
+  if (foodTab === "recent" || foodTab === "favorites") {
+    const ids = foodTab === "recent" ? data.recents : data.favorites;
+    const foods = ids.map((id) => data.foods[id]).filter(Boolean);
+    return renderFoodList(foods, foodTab === "recent" ? "Foods you add will show up here." : "Tap ☆ on a food to keep it here.");
+  }
+  if (foodTab === "mine") {
+    const custom = Object.values(data.foods).filter((food) => food.source === "custom");
+    return `${renderFoodList(custom, "No foods of your own yet.")}<button class="secondary-button" data-action="food-custom" style="margin-top:10px">+ Create a food</button>`;
+  }
+  const local = ciqualFoods && foodQuery ? searchCiqual(ciqualFoods, foodQuery) : [];
+  const localBlock = foodQuery ? (ciqualFoods ? renderFoodList(local, "No basic foods match. Try the packaged search below.") : `<p class="muted-copy">Loading foods…</p>`) : `<p class="muted-copy">Search basic foods like "chicken breast", "oat flakes" or "banana". French names work too.</p>`;
+  const packaged = packagedState === "loading" ? `<p class="muted-copy">Searching Open Food Facts…</p>` : packagedState === "error" ? `<p class="muted-copy">Couldn't reach Open Food Facts. Check your connection and try again.</p>` : packagedResults ? `<div class="field-label food-subhead">Packaged foods</div>${renderFoodList(packagedResults, "No packaged foods found.")}` : "";
+  return `<div class="food-search-row"><input class="text-field" type="search" id="food-query" value="${escapeHtml(foodQuery)}" placeholder="Search foods" autocomplete="off" enterkeyhint="search"></div><div id="food-local">${localBlock}</div>${foodQuery ? `<button class="link-button food-online" data-action="food-online">Search packaged foods online ${icon("arrow")}</button>` : ""}${packaged}<p class="food-source">Basic foods: ANSES Ciqual 2025, on this device. Packaged foods: Open Food Facts.</p>`;
+}
+function refreshFoodPane() {
+  const pane = document.querySelector("#food-pane");
+  if (!pane) return;
+  const typing = document.activeElement?.id === "food-query";
+  const caret = typing ? document.activeElement.selectionStart : null;
+  pane.innerHTML = renderFoodPane();
+  document.querySelectorAll("[data-action=food-tab]").forEach((button) => button.classList.toggle("selected", button.dataset.pane === foodTab));
+  bindFoodSearch();
+  if (typing) { const input = document.querySelector("#food-query"); input?.focus(); if (caret !== null) input?.setSelectionRange(caret, caret); }
+}
+let foodSearchTimer = null;
+function bindFoodSearch() {
+  const input = document.querySelector("#food-query");
+  if (!input) return;
+  input.addEventListener("input", () => {
+    foodQuery = input.value; packagedResults = null; packagedState = "";
+    clearTimeout(foodSearchTimer);
+    foodSearchTimer = setTimeout(async () => {
+      try { await loadCiqual(); } catch { }
+      if (foodTab === "search") document.querySelector("#food-local").innerHTML = (foodPickList = [], foodQuery ? (ciqualFoods ? renderFoodList(searchCiqual(ciqualFoods, foodQuery), "No basic foods match. Try the packaged search below.") : `<p class="muted-copy">The food list couldn't load.</p>`) : `<p class="muted-copy">Search basic foods like "chicken breast", "oat flakes" or "banana". French names work too.</p>`);
+      const online = document.querySelector(".food-online");
+      if (!online && foodQuery) refreshFoodPane();
+    }, 180);
+  });
+  input.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); runPackagedSearch(); } });
+}
+async function runPackagedSearch() {
+  if (!foodQuery.trim() || packagedState === "loading") return;
+  packagedState = "loading"; refreshFoodPane();
+  try { packagedResults = await searchPackaged(foodQuery.trim()); packagedState = ""; } catch { packagedResults = null; packagedState = "error"; }
+  refreshFoodPane();
+}
+function showFoodAdd(meal) {
+  foodMeal = meal; foodTab = foodTab || "search"; packagedResults = null; packagedState = "";
+  const label = mealTypes.find(([key]) => key === meal)?.[1] || "Food";
+  const tabs = [["search", "Search"], ["scan", "Scan"], ["recent", "Recent"], ["favorites", "Favourites"], ["mine", "My foods"]];
+  showSheet(`Add to ${label}`, "", `<div class="food-tabs" role="tablist">${tabs.map(([key, name]) => `<button class="food-tab${key === foodTab ? " selected" : ""}" data-action="food-tab" data-pane="${key}" role="tab">${name}</button>`).join("")}</div><div id="food-pane">${renderFoodPane()}</div>`, `<button class="secondary-button" data-action="close-sheet">Done</button>`);
+  bindFoodSearch();
+  loadCiqual().then(() => { if (foodTab === "search" && foodQuery) refreshFoodPane(); }).catch(() => { });
+  if (foodTab === "search") setTimeout(() => document.querySelector("#food-query")?.focus(), 60);
+}
+// The amount sheet: grams, meal, live numbers, favourite; also used to edit a logged entry.
+let foodAmountFood = null, foodEditId = null;
+function showFoodAmount(food, entry = null) {
+  foodAmountFood = food; foodEditId = entry?.id || null;
+  const grams = entry?.grams || food.serving?.grams || 100;
+  const favorite = nutrition().favorites.includes(food.id);
+  const chips = [...(food.serving ? [[food.serving.grams, `1 serving (${gramsText(food.serving.grams)})`]] : []), [50, "50 g"], [100, "100 g"], [150, "150 g"], [200, "200 g"]]
+    .filter(([value], index, all) => all.findIndex(([other]) => other === value) === index)
+    .map(([value, label]) => `<button class="flow-option" data-action="food-grams" data-grams="${value}">${escapeHtml(label)}</button>`).join("");
+  const meals = mealTypes.map(([key, label]) => `<option value="${key}" ${key === (entry?.meal || foodMeal) ? "selected" : ""}>${label}</option>`).join("");
+  showSheet(food.name, [food.brand, food.source === "ciqual" ? "ANSES Ciqual" : food.source === "off" ? "Open Food Facts" : "Your food"].filter(Boolean).join(" · "), `<div class="counter-row"><label class="field"><span class="field-label">Amount (g)</span><input class="number-field" type="text" inputmode="decimal" id="food-grams" value="${grams}" autocomplete="off"></label><label class="field"><span class="field-label">Meal</span><select class="select-field" id="food-meal">${meals}</select></label></div><div class="flow-options food-chips">${chips}</div><div id="food-preview" class="food-preview">${renderFoodPreview(food, grams)}</div><button class="link-button food-fav${favorite ? " on" : ""}" data-action="food-favorite">${icon("star")} ${favorite ? "In favourites" : "Add to favourites"}</button>`, `${entry ? `<button class="danger-button" data-action="food-delete">Delete</button>` : `<button class="secondary-button" data-action="food-back">Back</button>`}<button class="primary-button" data-action="food-save">${entry ? "SAVE" : "ADD"}</button>`);
+  document.querySelector("#food-grams")?.addEventListener("input", (event) => { document.querySelector("#food-preview").innerHTML = renderFoodPreview(food, parseAmount(event.target.value)); });
+}
+const parseAmount = (text) => { const value = Number(String(text).trim().replace(",", ".")); return Number.isFinite(value) && value > 0 ? value : 0; };
+function renderFoodPreview(food, grams) {
+  const amount = amountOf(food, grams);
+  const missing = Object.values(food.per100 || {}).some((value) => value === null || value === undefined);
+  const cells = [...(nutrition().showCalories ? [["Calories", kcalText(amount.kcal)]] : []), ...macroKeys.map(([key, label]) => [label, gramsText(amount[key])])];
+  return `<div class="food-preview-grid">${cells.map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join("")}</div>${missing ? `<small class="muted-copy">Some values aren't known for this food and count as 0.</small>` : ""}`;
+}
+function saveFoodEntry() {
+  const food = foodAmountFood;
+  const grams = parseAmount(document.querySelector("#food-grams")?.value);
+  if (!food) return;
+  if (!(grams > 0) || grams > 5000) { document.querySelector("#food-grams")?.focus(); toast("Enter an amount in grams."); return; }
+  const data = nutrition(), date = foodDay(), meal = document.querySelector("#food-meal")?.value || foodMeal;
+  const values = { foodId: food.id, name: food.name, brand: food.brand || "", grams, meal, ...amountOf(food, grams) };
+  const list = (data.logs[date] ||= []);
+  const existing = foodEditId ? list.find((item) => item.id === foodEditId) : null;
+  if (existing) Object.assign(existing, values); else list.push({ id: uid(), at: Date.now(), ...values });
+  rememberFood(food);
+  data.recents = [food.id, ...data.recents.filter((id) => id !== food.id)].slice(0, 30);
+  save(); document.querySelector(".overlay")?.remove(); render();
+  toast(existing ? "Saved." : `Added ${escapeHtml(food.name)}.`);
+}
+function deleteFoodEntry() {
+  const date = foodDay(), data = nutrition();
+  data.logs[date] = foodEntries(date).filter((entry) => entry.id !== foodEditId);
+  if (!data.logs[date].length) delete data.logs[date];
+  save(); document.querySelector(".overlay")?.remove(); render(); toast("Removed.");
+}
+function toggleFavoriteFood() {
+  const food = foodAmountFood, data = nutrition();
+  if (!food) return;
+  rememberFood(food);
+  const on = data.favorites.includes(food.id);
+  data.favorites = on ? data.favorites.filter((id) => id !== food.id) : [food.id, ...data.favorites];
+  save();
+  const button = document.querySelector("[data-action=food-favorite]");
+  if (button) { button.classList.toggle("on", !on); button.innerHTML = `${icon("star")} ${on ? "Add to favourites" : "In favourites"}`; }
+}
+function showCustomFood() {
+  showSheet("Create a food", "Values per 100 g, from the label.", `<label class="field"><span class="field-label">Name</span><input class="text-field" id="cf-name" maxlength="60" placeholder="e.g. Mum's lasagne"></label><div class="counter-row"><label class="field"><span class="field-label">Calories (kcal)</span><input class="number-field" id="cf-kcal" type="text" inputmode="decimal"></label><label class="field"><span class="field-label">Protein (g)</span><input class="number-field" id="cf-protein" type="text" inputmode="decimal"></label></div><div class="counter-row"><label class="field"><span class="field-label">Carbs (g)</span><input class="number-field" id="cf-carbs" type="text" inputmode="decimal"></label><label class="field"><span class="field-label">Fat (g)</span><input class="number-field" id="cf-fat" type="text" inputmode="decimal"></label></div><label class="field"><span class="field-label">Usual portion (g) <small>optional</small></span><input class="number-field" id="cf-serving" type="text" inputmode="decimal"></label>`, `<button class="secondary-button" data-action="food-back">Back</button><button class="primary-button" data-action="food-custom-save">SAVE</button>`);
+}
+function saveCustomFood() {
+  const name = document.querySelector("#cf-name")?.value.trim();
+  if (!name) { document.querySelector("#cf-name")?.focus(); toast("Give the food a name."); return; }
+  const read = (id) => { const text = document.querySelector(id)?.value.trim(); if (!text) return null; const value = Number(text.replace(",", ".")); return Number.isFinite(value) && value >= 0 ? value : NaN; };
+  const per100 = { kcal: read("#cf-kcal"), protein: read("#cf-protein"), carbs: read("#cf-carbs"), fat: read("#cf-fat") };
+  if (Object.values(per100).some(Number.isNaN)) { toast("Use numbers only, like 12.5."); return; }
+  if (per100.kcal === null && per100.protein === null) { toast("Add at least calories or protein."); return; }
+  const serving = parseAmount(document.querySelector("#cf-serving")?.value);
+  const food = { id: `custom:${uid()}`, name, brand: "", source: "custom", per100, serving: serving ? { grams: serving, label: `${serving} g` } : null };
+  rememberFood(food); save();
+  showFoodAmount(food);
+}
+async function lookupAndShow(code) {
+  const clean = String(code || "").replace(/\D/g, "");
+  const target = document.querySelector("#barcode-result");
+  if (clean.length < 6) { toast("That doesn't look like a barcode."); return; }
+  if (target) target.innerHTML = `<p class="muted-copy">Looking up ${clean}…</p>`;
+  try {
+    const food = await lookupBarcode(clean);
+    if (!food) { if (target) target.innerHTML = `<p class="muted-copy">Barcode ${clean} isn't in Open Food Facts yet. You can create it under "My foods".</p>`; return; }
+    if (food.per100.kcal === null && food.per100.protein === null) { if (target) target.innerHTML = `<p class="muted-copy">${escapeHtml(food.name)} has no nutrition values on Open Food Facts yet.</p>`; return; }
+    showFoodAmount(food);
+  } catch { if (target) target.innerHTML = `<p class="muted-copy">Couldn't reach Open Food Facts. Check your connection and try again.</p>`; }
+}
+// Camera scanning: the installed Android app uses Google's on-device scanner; browsers use the BarcodeDetector API.
+let scanStream = null;
+function stopScan() { scanStream?.getTracks().forEach((track) => track.stop()); scanStream = null; }
+async function startScan() {
+  if (nativePlugin("BarcodeScanner")) {
+    const call = (method, options = {}) => window.Capacitor.nativePromise("BarcodeScanner", method, options);
+    try {
+      // Google's scanner module downloads once on first use (Play Store installs usually have it already).
+      const module = await call("isGoogleBarcodeScannerModuleAvailable").catch(() => null);
+      if (module && module.available === false) { await call("installGoogleBarcodeScannerModule").catch(() => { }); toast("Getting the scanner ready. Try again in a few seconds."); return; }
+      const result = await call("scan", { formats: ["EAN_13", "EAN_8", "UPC_A", "UPC_E"] });
+      const code = result?.barcodes?.[0]?.rawValue;
+      if (code) lookupAndShow(code);
+    } catch (error) { if (!/cancel/i.test(String(error?.message || error))) toast("The scanner couldn't start. Type the barcode instead."); }
+    return;
+  }
+  const view = document.querySelector("#scan-view");
+  if (!view) return;
+  try {
+    const detector = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e"] });
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    view.innerHTML = `<video class="scan-video" playsinline muted></video><p class="muted-copy">Point the camera at the barcode.</p>`;
+    const video = view.querySelector("video");
+    video.srcObject = scanStream; await video.play();
+    const tick = async () => {
+      if (!scanStream || !document.body.contains(video)) { stopScan(); return; }
+      try { const codes = await detector.detect(video); if (codes[0]?.rawValue) { stopScan(); view.innerHTML = ""; lookupAndShow(codes[0].rawValue); return; } } catch { }
+      setTimeout(tick, 250);
+    };
+    tick();
+  } catch { stopScan(); view.innerHTML = `<p class="muted-copy">Honna couldn't use the camera. Allow camera access, or type the barcode.</p>`; }
+}
+function showFoodGoals() {
+  const goals = nutrition().goals;
+  const unit = state.units === "lbs" ? "lbs" : "kg";
+  const field = (id, label, value, hint = "") => `<label class="field"><span class="field-label">${label}${hint ? ` <small>${hint}</small>` : ""}</span><input class="number-field" id="${id}" type="text" inputmode="numeric" value="${value ?? ""}" placeholder="No goal"></label>`;
+  showSheet("Daily goals", "All optional. Leave a box empty for no goal.", `${nutrition().showCalories ? field("goal-kcal", "Calories (kcal)", goals.kcal) : ""}${field("goal-protein", "Protein (g)", goals.protein)}<div class="protein-helper"><span>Suggest protein from your body weight</span><div class="food-search-row"><input class="number-field" id="goal-weight" type="text" inputmode="decimal" placeholder="Weight (${unit})"><button class="secondary-button" data-action="food-protein-suggest">Suggest</button></div><small>About 1.6 g per kg a day: more didn't add muscle in a meta-analysis of 49 studies. ${sourceLink("morton2018")}</small></div><div class="counter-row">${field("goal-carbs", "Carbs (g)", goals.carbs)}${field("goal-fat", "Fat (g)", goals.fat)}</div>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="food-goals-save">SAVE</button>`);
+}
+function saveFoodGoals() {
+  const read = (id) => { const element = document.querySelector(id); if (!element) return undefined; const text = element.value.trim(); if (!text) return null; const value = Math.round(Number(text.replace(",", "."))); return Number.isFinite(value) && value > 0 && value < 20000 ? value : NaN; };
+  const next = { kcal: read("#goal-kcal"), protein: read("#goal-protein"), carbs: read("#goal-carbs"), fat: read("#goal-fat") };
+  if (Object.values(next).some(Number.isNaN)) { toast("Goals should be whole numbers."); return; }
+  const goals = nutrition().goals;
+  for (const [key, value] of Object.entries(next)) if (value !== undefined) goals[key] = value;
+  save(); document.querySelector(".overlay")?.remove(); render(); toast("Goals saved.");
+}
+function renderFood() {
+  const data = nutrition();
+  const intro = `<section class="page-intro"><div class="eyebrow">Fuel your training</div><h1>Food</h1><p>What you eat, day by day.</p></section>`;
+  if (!data.enabled) return `${intro}<section class="act-card act-intro food-intro"><span class="act-badge food-badge" aria-hidden="true">${icon("food")}</span><strong>Track what you eat</strong><p>Log meals by searching or scanning a barcode, and see calories, protein, carbs and fat against goals you choose, or none at all. It's optional, your log stays on this device, and you can hide calories and just follow protein.</p><button class="primary-button" data-action="food-enable">TURN ON FOOD TRACKING</button></section>`;
+  const date = foodDay(), today = todayKey(), totals = foodTotals(date), goals = data.goals;
+  const dayLabel = date === today ? "Today" : date === addDays(today, -1) ? "Yesterday" : prettyDate(date, { weekday: "long", month: "short", day: "numeric" });
+  const nav = `<div class="food-day"><button class="inline-icon-button" data-action="food-day" data-step="-1" aria-label="Previous day">‹</button><strong>${dayLabel}</strong><button class="inline-icon-button" data-action="food-day" data-step="1" aria-label="Next day" ${date >= today ? "disabled" : ""}>›</button></div>`;
+  const calories = data.showCalories ? `<div class="food-kcal"><strong>${Math.round(totals.kcal).toLocaleString("en-US")}</strong><span>${goals.kcal ? `of ${goals.kcal.toLocaleString("en-US")} kcal` : "kcal"}</span>${goals.kcal ? `<small>${totals.kcal <= goals.kcal ? `${Math.round(goals.kcal - totals.kcal).toLocaleString("en-US")} left` : `${Math.round(totals.kcal - goals.kcal).toLocaleString("en-US")} above your goal`}</small>` : ""}</div>` : "";
+  const bars = macroKeys.map(([key, label]) => {
+    const goal = goals[key], value = totals[key];
+    return `<div class="macro macro-${key}"><div class="macro-head"><span>${label}</span><strong>${gramsText(value)}${goal ? ` <small>/ ${goal} g</small>` : ""}</strong></div>${goal ? `<span class="macro-track"><i style="width:${Math.min(100, (value / goal) * 100).toFixed(0)}%"></i></span>` : ""}</div>`;
+  }).join("");
+  const summary = `<section class="act-card food-summary${data.showCalories ? "" : " no-kcal"}">${calories}<div class="macros">${bars}</div>${!goals.kcal && !goals.protein ? `<button class="link-button" data-action="food-goals">Set daily goals ${icon("arrow")}</button>` : ""}</section>`;
+  const meals = mealTypes.map(([key, label]) => {
+    const items = foodEntries(date).filter((entry) => entry.meal === key);
+    const mealTotals = items.reduce((sum, item) => ({ kcal: sum.kcal + (item.kcal || 0), protein: sum.protein + (item.protein || 0) }), { kcal: 0, protein: 0 });
+    const head = items.length ? [data.showCalories ? kcalText(mealTotals.kcal) : "", `${gramsText(mealTotals.protein)} protein`].filter(Boolean).join(" · ") : "";
+    return `<section class="meal-card"><div class="meal-head"><h3>${label}</h3><span>${head}</span></div>${items.map((item) => `<button class="meal-item" data-action="food-edit" data-id="${item.id}"><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml([item.brand, gramsText(item.grams)].filter(Boolean).join(" · "))}</small></span><span class="meal-item-values">${data.showCalories ? `<strong>${Math.round(item.kcal)} kcal</strong>` : ""}<small>${gramsText(item.protein)} protein</small></span></button>`).join("")}<button class="meal-add" data-action="food-add" data-meal="${key}">+ Add food</button></section>`;
+  }).join("");
+  const select = (change, on, label) => `<select class="select-field" data-change="${change}" aria-label="${label}"><option value="on" ${on ? "selected" : ""}>On</option><option value="off" ${on ? "" : "selected"}>Off</option></select>`;
+  const goalText = [data.showCalories && goals.kcal ? `${goals.kcal} kcal` : "", goals.protein ? `${goals.protein} g protein` : "", goals.carbs ? `${goals.carbs} g carbs` : "", goals.fat ? `${goals.fat} g fat` : ""].filter(Boolean).join(" · ") || "No goals set";
+  const settings = `<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Food settings</div><div class="setting-row"><div><strong>Daily goals</strong><small>${escapeHtml(goalText)}</small></div><button class="link-button" data-action="food-goals">Change ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Show calories</strong><small>Turn off to follow protein, carbs and fat only</small></div>${select("food-calories", data.showCalories, "Show calories")}</div><div class="setting-row"><div><strong>Food tracking</strong><small>Turning it off keeps your log</small></div>${select("food-enabled", true, "Food tracking")}</div></section><p class="food-source">Basic foods: ANSES Ciqual 2025 (open licence). Packaged foods: Open Food Facts, data under the ODbL.</p>`;
+  return `${intro}${nav}${summary}${meals}${settings}`;
 }
 // ---------- Activity: steps & distance ----------
 // Real numbers come from one place at a time: the connected health app (only through the native bridge below, which the
@@ -1208,7 +1515,7 @@ function renderView() {
   if (!state.onboarded) return renderOnboarding();
   if (workoutOpen()) { app.innerHTML = renderWorkout(); syncBackHistory(); return; }
   const tab = state.activeTab;
-  app.innerHTML = `${renderTopbar()}${tab === "Home" ? renderHome() : tab === "Plan" ? renderPlan() : tab === "Progress" ? renderProgress() : tab === "Activity" ? renderActivity() : renderProfile()}${renderResumeBar()}${renderNav()}`;
+  app.innerHTML = `${renderTopbar()}${tab === "Home" ? renderHome() : tab === "Plan" ? renderPlan() : tab === "Progress" ? renderProgress() : tab === "Activity" ? renderActivity() : tab === "Food" ? renderFood() : renderProfile()}${renderResumeBar()}${renderNav()}`;
   app.classList.toggle("has-resume-bar", Boolean(state.activeWorkout));
   syncBackHistory();
   if (tab === "Progress") {
@@ -1292,10 +1599,10 @@ window.addEventListener("popstate", () => {
   syncBackHistory();
 });
 function renderTopbar() {
-  return `<header class="topbar"><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><button class="top-action" data-action="profile" aria-label="Open profile">${icon("profile")}</button></header>`;
+  return `<header class="topbar"><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><button class="top-action${state.activeTab === "Profile" ? " active" : ""}" data-action="profile" aria-label="Open profile" aria-current="${state.activeTab === "Profile" ? "page" : "false"}">${icon("profile")}</button></header>`;
 }
 function renderNav() {
-  const tabs = [["Home", "home"], ["Plan", "plan"], ["Activity", "activity"], ["Progress", "progress"], ["Profile", "profile"]];
+  const tabs = [["Home", "home"], ["Plan", "plan"], ["Food", "food"], ["Activity", "activity"], ["Progress", "progress"]];
   return `<nav class="bottom-nav" aria-label="Main navigation">${tabs.map(([label, glyph]) => `<button class="nav-item ${state.activeTab === label ? "active" : ""}" data-tab="${label}">${icon(glyph)}<span>${label}</span></button>`).join("")}</nav>`;
 }
 function renderHome() {
@@ -2979,6 +3286,8 @@ function bindSelects() {
     if (select.dataset.change === "toggle-wellbeing") { wellbeing().enabled = select.value === "on"; toast(select.value === "on" ? "Wellbeing tracking is on. Check in from Home." : "Wellbeing tracking is off. Your past logs are kept."); }
     if (select.dataset.change === "toggle-tip") state.tipOfDay = select.value === "on";
     if (select.dataset.change === "appearance") state.appearance = ["light", "dark", "auto"].includes(select.value) ? select.value : "light";
+    if (select.dataset.change === "food-calories") nutrition().showCalories = select.value === "on";
+    if (select.dataset.change === "food-enabled" && select.value === "off") { nutrition().enabled = false; toast("Food tracking is off. Your log is kept."); }
     if (select.dataset.change === "act-celebrate") activity().celebrate = select.value === "on";
     if (select.dataset.change === "act-streak") activity().streak = select.value === "on";
     if (select.dataset.change === "act-demo") { activity().demo = select.value === "on"; if (activity().demo) toast("Demo mode: sample numbers, not your activity."); }
@@ -3033,6 +3342,25 @@ document.addEventListener("click", (event) => {
   else if (action === "set-flow") { setPeriodDay(button.dataset.date, button.dataset.flow); save(); render(); showCycleView(); toast(button.dataset.flow ? `${flowOptions.find(([value]) => value === button.dataset.flow)[1]} logged for ${prettyDate(button.dataset.date)}.` : `Cleared ${prettyDate(button.dataset.date)}.`); }
   else if (action === "cycle-details") showCycleView();
   else if (action === "research-library") showResearchLibrary();
+  else if (action === "food-enable") { nutrition().enabled = true; save(); render(); showFoodGoals(); }
+  else if (action === "food-day") { const next = addDays(foodDay(), Number(button.dataset.step) || 0); foodDate = next > todayKey() ? todayKey() : next; render(); }
+  else if (action === "food-add") showFoodAdd(button.dataset.meal);
+  else if (action === "food-tab") { stopScan(); foodTab = button.dataset.pane; refreshFoodPane(); if (foodTab === "search") loadCiqual().then(() => refreshFoodPane()).catch(() => { }); }
+  else if (action === "food-online") runPackagedSearch();
+  else if (action === "food-pick") { const food = foodPickList[Number(button.dataset.index)]; if (food) showFoodAmount(food); }
+  else if (action === "food-grams") { const input = document.querySelector("#food-grams"); if (input) { input.value = button.dataset.grams; input.dispatchEvent(new Event("input")); } }
+  else if (action === "food-save") saveFoodEntry();
+  else if (action === "food-delete") deleteFoodEntry();
+  else if (action === "food-favorite") toggleFavoriteFood();
+  else if (action === "food-back") showFoodAdd(foodMeal);
+  else if (action === "food-edit") { const entry = foodEntries(foodDay()).find((item) => item.id === button.dataset.id); if (entry) { foodMeal = entry.meal; showFoodAmount(nutrition().foods[entry.foodId] || { id: entry.foodId, name: entry.name, brand: entry.brand, source: "custom", per100: { kcal: entry.kcal * 100 / entry.grams, protein: entry.protein * 100 / entry.grams, carbs: entry.carbs * 100 / entry.grams, fat: entry.fat * 100 / entry.grams } }, entry); } }
+  else if (action === "food-custom") showCustomFood();
+  else if (action === "food-custom-save") saveCustomFood();
+  else if (action === "food-scan") startScan();
+  else if (action === "food-barcode") lookupAndShow(document.querySelector("#food-barcode")?.value);
+  else if (action === "food-goals") showFoodGoals();
+  else if (action === "food-goals-save") saveFoodGoals();
+  else if (action === "food-protein-suggest") { const weight = parseAmount(document.querySelector("#goal-weight")?.value); if (!weight) { toast("Enter your body weight first."); return; } const kg = state.units === "lbs" ? weight / 2.2046 : weight; const input = document.querySelector("#goal-protein"); if (input) input.value = Math.round(kg * 1.6); }
   else if (action === "strength-metric") { strengthMetric = button.dataset.metric === "top" ? "top" : "e1rm"; render(); }
   else if (action === "volume-metric") { volumeMetric = button.dataset.metric === "load" ? "load" : "sets"; render(); }
   else if (action === "plate-calc") showPlateCalculator(Number(button.dataset.exerciseIndex));
