@@ -415,8 +415,8 @@ body::before { content: ""; position: fixed; z-index: 40; top: 0; left: 0; right
 :root[data-appearance="dark"] { --chart-grid: #3a2e34; --chart-label: #a8999f; }
 :root[data-appearance="dark"] .chart-summary strong.up { color: #6fd39b; } :root[data-appearance="dark"] .chart-summary strong.down { color: #ff8f86; }
 /* Food */
-:root { --protein: #1f9c8a; --carbs: #e3a21a; --fat: #e05a7a; }
-:root[data-appearance="dark"] { --protein: #4fd1bd; --carbs: #f4bf4f; --fat: #ff8aa5; }
+:root { --protein: #1f9c8a; --carbs: #e3a21a; --fat: #e05a7a; --fiber: #5f9e3a; }
+:root[data-appearance="dark"] { --protein: #4fd1bd; --carbs: #f4bf4f; --fat: #ff8aa5; --fiber: #8fd17a; }
 .top-action.active { border-color: var(--sage); background: var(--sage-soft); color: var(--accent-ink); }
 .food-badge { background: linear-gradient(140deg, #1f9c8a, #7cc96f); box-shadow: 0 8px 18px rgba(31, 156, 138, .28); }
 .food-intro .primary-button { background: linear-gradient(140deg, #178a7a, #5eb85a); }
@@ -434,7 +434,7 @@ body::before { content: ""; position: fixed; z-index: 40; top: 0; left: 0; right
 .macro-head small { color: var(--muted); font-weight: 600; }
 .macro-track { display: block; height: 9px; margin-top: 5px; border-radius: 999px; background: var(--tint-bg); overflow: hidden; }
 .macro-track i { display: block; height: 100%; border-radius: 999px; background: var(--macro); transition: width .4s ease; }
-.macro-protein { --macro: var(--protein); } .macro-carbs { --macro: var(--carbs); } .macro-fat { --macro: var(--fat); }
+.macro-protein { --macro: var(--protein); } .macro-carbs { --macro: var(--carbs); } .macro-fat { --macro: var(--fat); } .macro-fiber { --macro: var(--fiber); }
 .food-summary.no-kcal .macro-protein .macro-head { font-size: 15px; }
 .food-summary > .link-button { justify-self: start; font-weight: 700; color: var(--accent-ink); }
 .meal-card { margin-top: 12px; padding: 14px 16px 10px; border-radius: 5px 18px 5px 18px; background: var(--card); box-shadow: var(--shadow); }
@@ -476,3 +476,4 @@ body::before { content: ""; position: fixed; z-index: 40; top: 0; left: 0; right
 .protein-helper > span { font-weight: 700; }
 .protein-helper small { color: var(--muted); line-height: 1.45; }
 .food-row-edit { display: flex; align-items: center; border-bottom: 1px solid var(--divider); background: var(--card); }.food-row-edit:last-child { border-bottom: 0; }.food-row-edit .food-result { flex: 1; min-width: 0; border-bottom: 0; }.food-edit-button { flex: 0 0 auto; margin-right: 8px; }
+.goal-hint { display: block; margin: -4px 0 6px; color: var(--muted); font-size: 11px; line-height: 1.45; }

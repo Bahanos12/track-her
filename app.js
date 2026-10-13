@@ -68,7 +68,7 @@ const defaultState = () => ({
   // source = the connected health app ("" = none). Demo numbers are generated on screen and never stored here.
   // Optional food tracking. logs: { "YYYY-MM-DD": [{ id, foodId, name, brand, grams, meal, kcal, protein, carbs, fat, at }] }
   // (each entry keeps its own numbers, so later food edits never change past days). foods: foods used before (recent/favourite/custom).
-  nutrition: { enabled: false, goals: { kcal: null, protein: null, carbs: null, fat: null }, showCalories: true, logs: {}, foods: {}, recents: [], favorites: [] },
+  nutrition: { enabled: false, goals: { kcal: null, protein: null, carbs: null, fat: null, fiber: null }, showCalories: true, logs: {}, foods: {}, recents: [], favorites: [] },
   activity: { enabled: false, goal: 8000, source: "", days: {}, celebrate: true, streak: true, demo: false, celebratedOn: "", view: "day", lastSync: 0 },
   // periodDays: { "YYYY-MM-DD": "spotting" | "light" | "medium" | "heavy" }
   menstrual: { asked: false, enabled: false, periodStarts: [], periodDays: {}, cycleLength: null, periodLength: 5, regularity: "unknown", contraception: "", checkins: [], dismissedInsights: {} },
@@ -797,6 +797,7 @@ const researchSources = {
   colenso2023: { cite: "Colenso-Semple et al. 2023 · Front Sports Act Living (umbrella review)", url: "https://www.frontiersin.org/articles/10.3389/fspor.2023.1054542" },
   elliottsale2020: { cite: "Elliott-Sale et al. 2020 · Sports Medicine (meta-analysis)", url: "https://nrl.northumbria.ac.uk/id/eprint/43772" },
   armour2019: { cite: "Armour et al. 2019 · Cochrane review (12 trials)", url: "https://www.cochrane.org/CD004142" },
+  efsa2010: { cite: "EFSA 2010 · Dietary reference values for carbohydrates and dietary fibre", url: "https://doi.org/10.2903/j.efsa.2010.1462" },
   morton2018: { cite: "Morton et al. 2018 · Br J Sports Med (meta-analysis, 49 studies)", url: "https://bjsm.bmj.com/content/52/6/376" },
   bruinvels2016: { cite: "Bruinvels et al. 2016 · PLoS ONE", url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC4763330/" },
 };
@@ -931,7 +932,7 @@ function beginCheckedWorkout(choice, suggestion = readinessSuggestion()) {
 // Basic foods come from the ANSES Ciqual 2025 table bundled with Honna (works offline, nothing sent anywhere).
 // Packaged foods come from Open Food Facts (barcode or online search): only the barcode or search words are sent.
 const mealTypes = [["breakfast", "Breakfast"], ["lunch", "Lunch"], ["dinner", "Dinner"], ["snacks", "Snacks"]];
-const macroKeys = [["protein", "Protein"], ["carbs", "Carbs"], ["fat", "Fat"]];
+const macroKeys = [["protein", "Protein"], ["carbs", "Carbs"], ["fat", "Fat"], ["fiber", "Fiber"]];
 function nutrition() {
   if (!state.nutrition || typeof state.nutrition !== "object") state.nutrition = {};
   for (const [key, value] of Object.entries(defaultState().nutrition)) if (state.nutrition[key] === undefined) state.nutrition[key] = value;
@@ -942,7 +943,7 @@ let foodDate = null;
 const foodDay = () => (foodDate && foodDate <= todayKey() ? foodDate : todayKey());
 const foodEntries = (date) => nutrition().logs[date] || [];
 function foodTotals(date) {
-  const totals = { kcal: 0, protein: 0, carbs: 0, fat: 0 };
+  const totals = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 };
   for (const entry of foodEntries(date)) for (const key of Object.keys(totals)) totals[key] += Number(entry[key]) || 0;
   return totals;
 }
@@ -951,7 +952,7 @@ const kcalText = (value) => `${Math.round(value).toLocaleString("en-US")} kcal`;
 function amountOf(food, grams) {
   const factor = (Number(grams) || 0) / 100, per = food.per100 || {};
   const part = (value) => (value === null || value === undefined ? 0 : Math.round(Number(value) * factor * 10) / 10);
-  return { kcal: Math.round((Number(per.kcal) || 0) * factor), protein: part(per.protein), carbs: part(per.carbs), fat: part(per.fat) };
+  return { kcal: Math.round((Number(per.kcal) || 0) * factor), protein: part(per.protein), carbs: part(per.carbs), fat: part(per.fat), fiber: part(per.fiber) };
 }
 const normalizeText = (text) => String(text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 let ciqualFoods = null;
@@ -960,7 +961,7 @@ async function loadCiqual() {
   const response = await fetch("data/ciqual-2025.json");
   if (!response.ok) throw new Error("Food list unavailable");
   const data = await response.json();
-  ciqualFoods = data.foods.map(([code, name, nameFr, kcal, protein, carbs, fat, group]) => ({ id: `ciqual:${code}`, name, nameFr, source: "ciqual", group, per100: { kcal, protein, carbs, fat }, key: normalizeText(`${name} ${nameFr}`), first: [normalizeText(name), normalizeText(nameFr)] }));
+  ciqualFoods = data.foods.map(([code, name, nameFr, kcal, protein, carbs, fat, group, fiber = null]) => ({ id: `ciqual:${code}`, name, nameFr, source: "ciqual", group, per100: { kcal, protein, carbs, fat, fiber }, key: normalizeText(`${name} ${nameFr}`), first: [normalizeText(name), normalizeText(nameFr)] }));
   return ciqualFoods;
 }
 // Every word must match; foods whose name starts with the search come first, then shorter (simpler) names.
@@ -977,7 +978,7 @@ function offFood(product) {
   const kcal = value("energy-kcal_100g") ?? (n.energy_100g ? Math.round(Number(n.energy_100g) / 4.184) : null);
   const brand = (Array.isArray(product.brands) ? product.brands.join(",") : String(product.brands || "")).split(",")[0].trim();
   const servingGrams = Number(product.serving_quantity) || null;
-  return { id: `off:${product.code}`, barcode: String(product.code || ""), name: String(product.product_name || "").trim() || "Unnamed product", brand, source: "off", per100: { kcal, protein: value("proteins_100g"), carbs: value("carbohydrates_100g"), fat: value("fat_100g") }, serving: servingGrams ? { grams: servingGrams, label: String(product.serving_size || `${servingGrams} g`) } : null };
+  return { id: `off:${product.code}`, barcode: String(product.code || ""), name: String(product.product_name || "").trim() || "Unnamed product", brand, source: "off", per100: { kcal, protein: value("proteins_100g"), carbs: value("carbohydrates_100g"), fat: value("fat_100g"), fiber: value("fiber_100g") }, serving: servingGrams ? { grams: servingGrams, label: String(product.serving_size || `${servingGrams} g`) } : null };
 }
 async function fetchJson(url) {
   const controller = new AbortController();
@@ -1097,9 +1098,10 @@ function showFoodAmount(food, entry = null) {
 const parseAmount = (text) => { const value = Number(String(text).trim().replace(",", ".")); return Number.isFinite(value) && value > 0 ? value : 0; };
 function renderFoodPreview(food, grams) {
   const amount = amountOf(food, grams);
-  const missing = Object.values(food.per100 || {}).some((value) => value === null || value === undefined);
+  const per = food.per100 || {};
+  const missing = [["kcal", "Calories"], ...macroKeys].filter(([key]) => per[key] === null || per[key] === undefined).map(([, label]) => label.toLowerCase());
   const cells = [...(nutrition().showCalories ? [["Calories", kcalText(amount.kcal)]] : []), ...macroKeys.map(([key, label]) => [label, gramsText(amount[key])])];
-  return `<div class="food-preview-grid">${cells.map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join("")}</div>${missing ? `<small class="muted-copy">Some values aren't known for this food and count as 0.</small>` : ""}`;
+  return `<div class="food-preview-grid">${cells.map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join("")}</div>${missing.length ? `<small class="muted-copy">Not known for this food (counted as 0): ${missing.join(", ")}.</small>` : ""}`;
 }
 function saveFoodEntry() {
   const food = foodAmountFood;
@@ -1139,13 +1141,13 @@ function showCustomFood(food = null) {
   const value = (number) => (number === null || number === undefined ? "" : number);
   const used = food ? Object.values(nutrition().logs).flat().filter((entry) => entry.foodId === food.id).length : 0;
   const update = used ? `<label class="check-field"><input type="checkbox" id="cf-update" checked><span>Also update the ${used} ${used === 1 ? "entry" : "entries"} already logged with this food</span></label>` : "";
-  showSheet(food ? "Edit food" : "Create a food", "Values per 100 g, from the label.", `<label class="field"><span class="field-label">Name</span><input class="text-field" id="cf-name" maxlength="60" placeholder="e.g. Mum's lasagne" value="${escapeHtml(food?.name || "")}"></label><div class="counter-row"><label class="field"><span class="field-label">Calories (kcal)</span><input class="number-field" id="cf-kcal" type="text" inputmode="decimal" value="${value(per.kcal)}"></label><label class="field"><span class="field-label">Protein (g)</span><input class="number-field" id="cf-protein" type="text" inputmode="decimal" value="${value(per.protein)}"></label></div><div class="counter-row"><label class="field"><span class="field-label">Carbs (g)</span><input class="number-field" id="cf-carbs" type="text" inputmode="decimal" value="${value(per.carbs)}"></label><label class="field"><span class="field-label">Fat (g)</span><input class="number-field" id="cf-fat" type="text" inputmode="decimal" value="${value(per.fat)}"></label></div><label class="field"><span class="field-label">Usual portion (g) <small>optional</small></span><input class="number-field" id="cf-serving" type="text" inputmode="decimal" value="${value(food?.serving?.grams)}"></label>${update}`, food ? `<button class="danger-button" data-action="food-custom-delete">Delete</button><button class="primary-button" data-action="food-custom-save">SAVE</button>` : `<button class="secondary-button" data-action="food-back">Back</button><button class="primary-button" data-action="food-custom-save">SAVE</button>`);
+  showSheet(food ? "Edit food" : "Create a food", "Values per 100 g, from the label.", `<label class="field"><span class="field-label">Name</span><input class="text-field" id="cf-name" maxlength="60" placeholder="e.g. Mum's lasagne" value="${escapeHtml(food?.name || "")}"></label><div class="counter-row"><label class="field"><span class="field-label">Calories (kcal)</span><input class="number-field" id="cf-kcal" type="text" inputmode="decimal" value="${value(per.kcal)}"></label><label class="field"><span class="field-label">Protein (g)</span><input class="number-field" id="cf-protein" type="text" inputmode="decimal" value="${value(per.protein)}"></label></div><div class="counter-row"><label class="field"><span class="field-label">Carbs (g)</span><input class="number-field" id="cf-carbs" type="text" inputmode="decimal" value="${value(per.carbs)}"></label><label class="field"><span class="field-label">Fat (g)</span><input class="number-field" id="cf-fat" type="text" inputmode="decimal" value="${value(per.fat)}"></label></div><div class="counter-row"><label class="field"><span class="field-label">Fiber (g)</span><input class="number-field" id="cf-fiber" type="text" inputmode="decimal" value="${value(per.fiber)}"></label><label class="field"><span class="field-label">Usual portion (g) <small>optional</small></span><input class="number-field" id="cf-serving" type="text" inputmode="decimal" value="${value(food?.serving?.grams)}"></label></div>${update}`, food ? `<button class="danger-button" data-action="food-custom-delete">Delete</button><button class="primary-button" data-action="food-custom-save">SAVE</button>` : `<button class="secondary-button" data-action="food-back">Back</button><button class="primary-button" data-action="food-custom-save">SAVE</button>`);
 }
 function saveCustomFood() {
   const name = document.querySelector("#cf-name")?.value.trim();
   if (!name) { document.querySelector("#cf-name")?.focus(); toast("Give the food a name."); return; }
   const read = (id) => { const text = document.querySelector(id)?.value.trim(); if (!text) return null; const value = Number(text.replace(",", ".")); return Number.isFinite(value) && value >= 0 ? value : NaN; };
-  const per100 = { kcal: read("#cf-kcal"), protein: read("#cf-protein"), carbs: read("#cf-carbs"), fat: read("#cf-fat") };
+  const per100 = { kcal: read("#cf-kcal"), protein: read("#cf-protein"), carbs: read("#cf-carbs"), fat: read("#cf-fat"), fiber: read("#cf-fiber") };
   if (Object.values(per100).some(Number.isNaN)) { toast("Use numbers only, like 12.5."); return; }
   if (per100.kcal === null && per100.protein === null) { toast("Add at least calories or protein."); return; }
   const serving = parseAmount(document.querySelector("#cf-serving")?.value);
@@ -1228,11 +1230,11 @@ function showFoodGoals() {
   const goals = nutrition().goals;
   const unit = state.units === "lbs" ? "lbs" : "kg";
   const field = (id, label, value, hint = "") => `<label class="field"><span class="field-label">${label}${hint ? ` <small>${hint}</small>` : ""}</span><input class="number-field" id="${id}" type="text" inputmode="numeric" value="${value ?? ""}" placeholder="No goal"></label>`;
-  showSheet("Daily goals", "All optional. Leave a box empty for no goal.", `${nutrition().showCalories ? field("goal-kcal", "Calories (kcal)", goals.kcal) : ""}${field("goal-protein", "Protein (g)", goals.protein)}<div class="protein-helper"><span>Suggest protein from your body weight</span><div class="food-search-row"><input class="number-field" id="goal-weight" type="text" inputmode="decimal" placeholder="Weight (${unit})"><button class="secondary-button" data-action="food-protein-suggest">Suggest</button></div><small>About 1.6 g per kg a day: more didn't add muscle in a meta-analysis of 49 studies. ${sourceLink("morton2018")}</small></div><div class="counter-row">${field("goal-carbs", "Carbs (g)", goals.carbs)}${field("goal-fat", "Fat (g)", goals.fat)}</div>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="food-goals-save">SAVE</button>`);
+  showSheet("Daily goals", "All optional. Leave a box empty for no goal.", `${nutrition().showCalories ? field("goal-kcal", "Calories (kcal)", goals.kcal) : ""}${field("goal-protein", "Protein (g)", goals.protein)}<div class="protein-helper"><span>Suggest protein from your body weight</span><div class="food-search-row"><input class="number-field" id="goal-weight" type="text" inputmode="decimal" placeholder="Weight (${unit})"><button class="secondary-button" data-action="food-protein-suggest">Suggest</button></div><small>About 1.6 g per kg a day: more didn't add muscle in a meta-analysis of 49 studies. ${sourceLink("morton2018")}</small></div><div class="counter-row">${field("goal-carbs", "Carbs (g)", goals.carbs)}${field("goal-fat", "Fat (g)", goals.fat)}</div>${field("goal-fiber", "Fiber (g)", goals.fiber)}<small class="goal-hint">For adults, EFSA considers 25 g of fiber a day adequate. ${sourceLink("efsa2010")}</small>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="food-goals-save">SAVE</button>`);
 }
 function saveFoodGoals() {
   const read = (id) => { const element = document.querySelector(id); if (!element) return undefined; const text = element.value.trim(); if (!text) return null; const value = Math.round(Number(text.replace(",", "."))); return Number.isFinite(value) && value > 0 && value < 20000 ? value : NaN; };
-  const next = { kcal: read("#goal-kcal"), protein: read("#goal-protein"), carbs: read("#goal-carbs"), fat: read("#goal-fat") };
+  const next = { kcal: read("#goal-kcal"), protein: read("#goal-protein"), carbs: read("#goal-carbs"), fat: read("#goal-fat"), fiber: read("#goal-fiber") };
   if (Object.values(next).some(Number.isNaN)) { toast("Goals should be whole numbers."); return; }
   const goals = nutrition().goals;
   for (const [key, value] of Object.entries(next)) if (value !== undefined) goals[key] = value;
@@ -1258,7 +1260,7 @@ function renderFood() {
     return `<section class="meal-card"><div class="meal-head"><h3>${label}</h3><span>${head}</span></div>${items.map((item) => `<button class="meal-item" data-action="food-edit" data-id="${item.id}"><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml([item.brand, gramsText(item.grams)].filter(Boolean).join(" · "))}</small></span><span class="meal-item-values">${data.showCalories ? `<strong>${Math.round(item.kcal)} kcal</strong>` : ""}<small>${gramsText(item.protein)} protein</small></span></button>`).join("")}<button class="meal-add" data-action="food-add" data-meal="${key}">+ Add food</button></section>`;
   }).join("");
   const select = (change, on, label) => `<select class="select-field" data-change="${change}" aria-label="${label}"><option value="on" ${on ? "selected" : ""}>On</option><option value="off" ${on ? "" : "selected"}>Off</option></select>`;
-  const goalText = [data.showCalories && goals.kcal ? `${goals.kcal} kcal` : "", goals.protein ? `${goals.protein} g protein` : "", goals.carbs ? `${goals.carbs} g carbs` : "", goals.fat ? `${goals.fat} g fat` : ""].filter(Boolean).join(" · ") || "No goals set";
+  const goalText = [data.showCalories && goals.kcal ? `${goals.kcal} kcal` : "", goals.protein ? `${goals.protein} g protein` : "", goals.carbs ? `${goals.carbs} g carbs` : "", goals.fat ? `${goals.fat} g fat` : "", goals.fiber ? `${goals.fiber} g fiber` : ""].filter(Boolean).join(" · ") || "No goals set";
   const settings = `<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Food settings</div><div class="setting-row"><div><strong>Daily goals</strong><small>${escapeHtml(goalText)}</small></div><button class="link-button" data-action="food-goals">Change ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Show calories</strong><small>Turn off to follow protein, carbs and fat only</small></div>${select("food-calories", data.showCalories, "Show calories")}</div><div class="setting-row"><div><strong>Food tracking</strong><small>Turning it off keeps your log</small></div>${select("food-enabled", true, "Food tracking")}</div></section><p class="food-source">Basic foods: ANSES Ciqual 2025 (open licence). Packaged foods: Open Food Facts, data under the ODbL.</p>`;
   return `${intro}${nav}${summary}${meals}${settings}`;
 }
@@ -3389,7 +3391,7 @@ document.addEventListener("click", (event) => {
   else if (action === "food-delete") deleteFoodEntry();
   else if (action === "food-favorite") toggleFavoriteFood();
   else if (action === "food-back") showFoodAdd(foodMeal);
-  else if (action === "food-edit") { const entry = foodEntries(foodDay()).find((item) => item.id === button.dataset.id); if (entry) { foodMeal = entry.meal; showFoodAmount(nutrition().foods[entry.foodId] || { id: entry.foodId, name: entry.name, brand: entry.brand, source: "custom", per100: { kcal: entry.kcal * 100 / entry.grams, protein: entry.protein * 100 / entry.grams, carbs: entry.carbs * 100 / entry.grams, fat: entry.fat * 100 / entry.grams } }, entry); } }
+  else if (action === "food-edit") { const entry = foodEntries(foodDay()).find((item) => item.id === button.dataset.id); if (entry) { foodMeal = entry.meal; showFoodAmount(nutrition().foods[entry.foodId] || { id: entry.foodId, name: entry.name, brand: entry.brand, source: "custom", per100: { kcal: entry.kcal * 100 / entry.grams, protein: entry.protein * 100 / entry.grams, carbs: entry.carbs * 100 / entry.grams, fat: entry.fat * 100 / entry.grams, fiber: entry.fiber === undefined ? null : entry.fiber * 100 / entry.grams } }, entry); } }
   else if (action === "food-custom") showCustomFood();
   else if (action === "food-custom-save") saveCustomFood();
   else if (action === "food-custom-edit") { const food = nutrition().foods[button.dataset.id]; if (food) showCustomFood(food); }
