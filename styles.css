@@ -385,15 +385,6 @@ body::before { content: ""; position: fixed; z-index: 40; top: 0; left: 0; right
 .plate-summary strong { font: 800 20px Manrope, sans-serif; }
 .plate-summary small, .plate-note { color: var(--muted); font-size: 12px; }
 .plate-note { margin: 8px 0 0; color: var(--accent-ink); }
-/* Steps on Home */
-.steps-chip { display: grid; grid-template-columns: 36px 1fr; align-items: center; column-gap: 11px; row-gap: 8px; width: 100%; margin: -4px 0 18px; padding: 12px 14px; border: 0; border-radius: 5px 16px 5px 16px; background: linear-gradient(135deg, #fff0f3, #fff3ea); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
-.steps-chip-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: linear-gradient(140deg, var(--act-pink), var(--act-orange)); color: white; }
-.steps-chip-icon svg { width: 20px; height: 20px; }
-.steps-chip-text strong { display: block; font-size: 14px; }
-.steps-chip-text small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
-.steps-chip-bar { grid-column: 1 / -1; height: 6px; border-radius: 999px; background: rgba(252, 88, 98, .16); overflow: hidden; }
-.steps-chip-bar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--act-pink), var(--act-orange)); }
-:root[data-appearance="dark"] .steps-chip { background: linear-gradient(135deg, #2e1a22, #2e2018); }
 /* Deload */
 .deload-card { align-items: flex-start; }
 .deload-card .source-link { display: inline-block; margin-top: 4px; }
