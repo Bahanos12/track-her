@@ -1670,7 +1670,7 @@ function renderHome() {
   return `<section class="greeting"><div class="eyebrow">Your training, in rhythm</div><h1>${greeting}${state.name ? `, ${escapeHtml(state.name)}` : ""}</h1></section>
     <div class="section-heading"><h2>${isToday ? "Today's workout" : "Up next"}</h2><button class="link-button" data-tab="Plan">View plan</button></div>
     <section class="today-card"><div class="today-top"><span class="eyebrow">${escapeHtml(scheduledWorkout.day)} · ${isToday ? "Today" : "Coming up"}${alternate ? " · Changed for today" : ""}</span><div class="today-card-actions"><span class="date-chip">${weekdayNames.includes(scheduledWorkout.day) ? prettyDate(keyFromDate(weekdayDate(scheduledWorkout.day)), { month: "short", day: "numeric" }) : "Any day"}</span>${alternatives.length ? `<button class="today-options-button" data-action="change-today-workout" data-scheduled-day-id="${scheduledWorkout.id}" aria-label="More workout options" title="More workout options">${icon("more")}</button>` : ""}</div></div><div class="today-title">${escapeHtml(workout.name)}</div><p class="today-meta">${workout.exercises.length} exercises <span aria-hidden="true">·</span> Approximately ${estimateDuration(workout)} min</p><div class="today-bottom"><div class="avatar-stack"><span class="tiny-dots"><i></i><i></i><i></i></span><span>${escapeHtml(state.program.name)}</span></div><button class="primary-button" data-action="start-workout" data-workout-id="${workout.id}" data-scheduled-workout-id="${scheduledWorkout.id}">${state.activeWorkout?.workoutId === workout.id ? "RESUME WORKOUT" : "START WORKOUT"} ${icon("arrow")}</button></div></section>
-    ${renderUndoFinishCard()}${renderDeloadCard()}${renderCycleCard()}${renderWellbeingCard()}
+    ${renderUndoFinishCard()}${renderDeloadCard()}${renderBackupCard()}${renderCycleCard()}${renderWellbeingCard()}
     <section class="section"><div class="section-heading"><h2>Today's flow</h2><span class="eyebrow">${workout.exercises.length} moves</span></div><div class="exercise-preview">${workout.exercises.map((exercise, index) => `<button class="exercise-row" data-action="preview-exercise" data-day-id="${workout.id}" data-exercise-id="${exercise.id}" aria-label="Preview ${escapeHtml(exercise.name)}"><span class="exercise-number">${String(index + 1).padStart(2, "0")}</span><span class="exercise-row-main"><span class="exercise-row-name">${escapeHtml(exercise.name)}</span>${exercise.notes ? `<span class="exercise-row-detail">${escapeHtml(exercise.notes)}</span>` : ""}</span><span class="target-pill">${exercise.sets} × ${exercise.reps || "—"}</span></button>`).join("") || `<div class="empty-state"><p>Add exercises to this workout in your plan.</p></div>`}</div></section>
     ${renderTipOfTheDay()}
     ${last ? `<section class="section"><div class="section-heading"><h2>Last workout</h2><button class="link-button" data-tab="Progress">History</button></div><div class="last-workout"><div><div class="exercise-row-name">${escapeHtml(last.name)}</div><div class="exercise-row-detail">Completed ${prettyDate(last.date, { weekday: "long", month: "short", day: "numeric" })}</div></div><span class="last-icon">${icon("history")}</span></div></section>` : ""}
@@ -1780,7 +1780,7 @@ function renderVolume() {
 }
 function renderProfile() {
   const standalone = nativeApp || window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
-  return `<section class="page-intro profile-intro"><div class="profile-avatar">${escapeHtml((state.name || "H").slice(0, 1).toUpperCase())}</div><div class="profile-intro-text"><div class="eyebrow">Made for your pace</div><button class="profile-name" data-action="edit-name" aria-label="Edit your name"><h1>${escapeHtml(state.name || "Add your name")}</h1><span class="edit-hint" aria-hidden="true">${icon("edit")}</span></button><p>${escapeHtml(state.program.name)}</p></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>About you</strong><small>Shapes recommendations and features</small></div><select class="select-field" data-change="sex" aria-label="About you"><option value="" ${userSex() ? "" : "selected"} disabled>Choose</option>${sexOptions.map(([value, label]) => `<option value="${value}" ${userSex() === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div>${notificationsSupported() ? `<div class="setting-row"><div><strong>Rest timer alerts</strong><small>${state.restAlerts === "on" && Notification.permission !== "granted" ? "Blocked in browser settings" : "Notify when you leave the app during a rest"}</small></div><select class="select-field" data-change="rest-alerts" aria-label="Rest timer alerts"><option value="on" ${restAlertsOn() ? "selected" : ""}>On</option><option value="off" ${restAlertsOn() ? "" : "selected"}>Off</option></select></div>` : ""}<div class="setting-row"><div><strong>Appearance</strong><small>Dark mode is easier on the eyes in the evening</small></div><select class="select-field" data-change="appearance" aria-label="Appearance">${[["light", "Light"], ["dark", "Dark"], ["auto", "Match phone"]].map(([value, label]) => `<option value="${value}" ${(state.appearance || "light") === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section>${renderCycleSettings()}<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Honna</button>`}</section><p class="eyebrow" style="margin:22px 0 6px;text-align:center">Honna · Your workouts, in rhythm</p><p class="privacy-note">Your data stays on this device. <a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a></p><p class="privacy-note medical-note">Honna gives general fitness information, not medical advice, diagnosis or contraception. Talk to a doctor about health concerns.</p>`;
+  return `<section class="page-intro profile-intro"><div class="profile-avatar">${escapeHtml((state.name || "H").slice(0, 1).toUpperCase())}</div><div class="profile-intro-text"><div class="eyebrow">Made for your pace</div><button class="profile-name" data-action="edit-name" aria-label="Edit your name"><h1>${escapeHtml(state.name || "Add your name")}</h1><span class="edit-hint" aria-hidden="true">${icon("edit")}</span></button><p>${escapeHtml(state.program.name)}</p></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Preferences</div><div class="setting-row"><div><strong>About you</strong><small>Shapes recommendations and features</small></div><select class="select-field" data-change="sex" aria-label="About you"><option value="" ${userSex() ? "" : "selected"} disabled>Choose</option>${sexOptions.map(([value, label]) => `<option value="${value}" ${userSex() === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="setting-row"><div><strong>Weight units</strong><small>Choose the units you train with</small></div><select class="select-field" data-change="units"><option value="kg" ${state.units === "kg" ? "selected" : ""}>Kilograms</option><option value="lbs" ${state.units === "lbs" ? "selected" : ""}>Pounds</option></select></div><div class="setting-row"><div><strong>Weight increment</strong><small>Change per tap on + or −</small></div><select class="select-field" data-change="weight-step">${(state.units === "kg" ? [0.5, 1, 2, 2.5, 5] : [1, 2, 2.5, 5, 10]).map((step) => `<option value="${step}" ${Number(state.weightStep) === step ? "selected" : ""}>${step} ${state.units}</option>`).join("")}</select></div>${notificationsSupported() ? `<div class="setting-row"><div><strong>Rest timer alerts</strong><small>${state.restAlerts === "on" && notificationPermission() !== "granted" ? (nativeNotify() ? "Notifications are off for Honna in your phone's settings" : "Blocked in browser settings") : "Notify when you leave the app during a rest"}${nativeNotify() && restAlertsOn() && nativeExactAlarms !== "granted" ? ` <button class="link-button inline-link" data-action="exact-alarms">Make alerts on time</button>` : ""}</small></div><select class="select-field" data-change="rest-alerts" aria-label="Rest timer alerts"><option value="on" ${restAlertsOn() ? "selected" : ""}>On</option><option value="off" ${restAlertsOn() ? "" : "selected"}>Off</option></select></div>` : ""}<div class="setting-row"><div><strong>Appearance</strong><small>Dark mode is easier on the eyes in the evening</small></div><select class="select-field" data-change="appearance" aria-label="Appearance">${[["light", "Light"], ["dark", "Dark"], ["auto", "Match phone"]].map(([value, label]) => `<option value="${value}" ${(state.appearance || "light") === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="theme-setting"><div><strong>Color theme</strong><small>Pick the colors that feel like you</small></div><div class="theme-options" role="radiogroup" aria-label="Color theme">${colorThemes.map((theme) => { const selected = (colorThemes.find((item) => item.id === state.theme) || colorThemes[0]).id === theme.id; return `<button class="theme-option${selected ? " selected" : ""}" data-action="set-theme" data-theme-id="${theme.id}" role="radio" aria-checked="${selected}"><span class="theme-dots" aria-hidden="true">${theme.colors.map((color) => `<i style="background:${color}"></i>`).join("")}</span><span class="theme-name">${theme.name}</span></button>`; }).join("")}</div></div></section><section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Your account</div><div class="setting-row"><div><strong>Program</strong><small>${escapeHtml(state.program.name)}</small></div><button class="link-button" data-tab="Plan">View plan ${icon("arrow")}</button></div><div class="setting-row"><div><strong>Workout history</strong><small>${state.history.length} sessions saved on this device</small></div><button class="link-button" data-tab="Progress">View ${icon("arrow")}</button></div></section>${renderCycleSettings()}<section class="settings-group"><div class="eyebrow" style="margin-bottom:7px">Device data</div><div class="backup-actions"><button class="secondary-button" data-action="export-backup">↓ &nbsp;Export backup</button><button class="secondary-button" data-action="restore-backup">↑ &nbsp;Restore backup</button></div>${standalone ? "" : `<button class="secondary-button install-button" data-action="install-app">${icon("arrow")} &nbsp;Install Honna</button>`}</section><p class="eyebrow" style="margin:22px 0 6px;text-align:center">Honna · Your workouts, in rhythm</p><p class="privacy-note">Your data stays on this device. <a href="${nativeApp ? "https://bahanos12.github.io/track-her/privacy.html" : "privacy.html"}" target="_blank" rel="noopener">Privacy policy</a></p><p class="privacy-note medical-note">Honna gives general fitness information, not medical advice, diagnosis or contraception. Talk to a doctor about health concerns.</p>`;
 }
 function renderOnboarding() {
   app.innerHTML = `<div class="onboarding"><div><div class="brand"><span class="brand-mark">${icon("spark")}</span>Honna</div><div class="onboarding-visual"><svg viewBox="0 0 220 190" fill="none" aria-hidden="true"><path d="M45 146c13-38 26-50 49-50 17 0 23 11 34 11 12 0 17-15 28-15 15 0 21 18 25 54" stroke="#60796c" stroke-width="14" stroke-linecap="round"/><path d="M73 81c-2-14 3-27 17-31 14-4 25 5 26 20 1 16-7 29-20 30-12 0-21-7-23-19Z" fill="#bd7f76"/><path d="M59 147h116" stroke="#40594d" stroke-width="8" stroke-linecap="round"/><circle cx="172" cy="48" r="16" fill="#dfb965"/><path d="m169 48 3 3 6-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="eyebrow">A little stronger, each time</div><h1>Welcome to Honna</h1><p class="onboarding-copy">Your workouts. Your progress. All in one place.</p></div><div><div class="step-dots"><i class="active"></i><i></i><i></i></div><div class="onboarding-actions"><button class="primary-button" data-action="onboarding-next">LET'S GET STARTED ${icon("arrow")}</button><button class="link-button" data-action="use-sample">Explore with a sample plan</button></div></div></div>`;
@@ -1929,16 +1929,30 @@ function beginRest(seconds) {
 // when you leave, and a "Rest is up" alert at the end (best effort: the phone may pause a backgrounded app).
 const restAlertTag = "honna-rest";
 let restAlertTimer = null;
-function notificationsSupported() { return !nativeApp && "Notification" in window && "serviceWorker" in navigator; }
-function restAlertsOn() { return notificationsSupported() && state.restAlerts === "on" && Notification.permission === "granted"; }
+// The Android app uses Android's own notifications; browsers use the service worker.
+const nativeNotify = () => nativePlugin("LocalNotifications");
+let nativeNotifyPermission = "prompt", nativeExactAlarms = "granted";
+async function refreshNativeNotifyState() {
+  if (!nativeNotify()) return;
+  try { nativeNotifyPermission = (await window.Capacitor.nativePromise("LocalNotifications", "checkPermissions"))?.display || "prompt"; } catch { }
+  try { nativeExactAlarms = (await window.Capacitor.nativePromise("LocalNotifications", "checkExactNotificationSetting"))?.exact_alarm || "granted"; } catch { }
+  if (state.activeTab === "Profile" && !workoutOpen() && !document.querySelector(".overlay")) render();
+}
+function notificationPermission() { return nativeNotify() ? nativeNotifyPermission : ("Notification" in window ? Notification.permission : "denied"); }
+function notificationsSupported() { return nativeNotify() || (!nativeApp && "Notification" in window && "serviceWorker" in navigator); }
+function restAlertsOn() { return notificationsSupported() && state.restAlerts === "on" && notificationPermission() === "granted"; }
 // Asked once, inside the rest bar (never a pop-up over the workout).
-function shouldAskRestAlerts() { return notificationsSupported() && !state.restAlerts && Notification.permission !== "denied"; }
+function shouldAskRestAlerts() { return notificationsSupported() && !state.restAlerts && notificationPermission() !== "denied"; }
 async function enableRestAlerts() {
   if (!notificationsSupported()) return false;
-  const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+  let permission = notificationPermission();
+  if (permission !== "granted") {
+    if (nativeNotify()) { try { permission = (await window.Capacitor.nativePromise("LocalNotifications", "requestPermissions"))?.display || "denied"; } catch { permission = "denied"; } nativeNotifyPermission = permission; }
+    else permission = await Notification.requestPermission();
+  }
   state.restAlerts = permission === "granted" ? "on" : "off";
   save();
-  if (permission !== "granted") toast("Notifications are blocked. You can allow them for this site in your browser settings.");
+  if (permission !== "granted") toast(nativeNotify() ? "Notifications are off for Honna. You can allow them in your phone's settings." : "Notifications are blocked. You can allow them for this site in your browser settings.");
   return permission === "granted";
 }
 function nextSetLabel() {
@@ -1951,14 +1965,22 @@ function nextSetLabel() {
 async function showRestNotification(title, options) {
   try { (await navigator.serviceWorker.ready).showNotification(title, { tag: restAlertTag, icon: "icons/icon-192.png", badge: "icons/favicon-48.png", ...options }); } catch { }
 }
+const nativeRestId = 4201;
 async function clearRestNotifications() {
   clearTimeout(restAlertTimer); restAlertTimer = null;
+  if (nativeNotify()) { try { await window.Capacitor.nativePromise("LocalNotifications", "cancel", { notifications: [{ id: nativeRestId }] }); } catch { } return; }
   try { for (const notification of await (await navigator.serviceWorker.ready).getNotifications({ tag: restAlertTag })) notification.close(); } catch { }
 }
 document.addEventListener("visibilitychange", () => {
   const endsAt = state.activeWorkout?.restEndsAt;
   if (document.visibilityState === "visible") { clearRestNotifications(); return; }
   if (!restAlertsOn() || !endsAt || endsAt <= Date.now()) return;
+  if (nativeNotify()) {
+    // Android shows it even if Honna is closed; Android may deliver it a little late unless "Alarms & reminders" is allowed.
+    const next = nextSetLabel();
+    try { window.Capacitor.nativePromise("LocalNotifications", "schedule", { notifications: [{ id: nativeRestId, title: "Rest is up", body: next ? `Time for ${next}.` : "Time for your next set.", schedule: { at: new Date(endsAt).toISOString(), allowWhileIdle: true } }] }); } catch { }
+    return;
+  }
   const time = new Date(endsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   showRestNotification("Rest timer", { body: `Back at ${time} · ${state.activeWorkout.name}`, silent: true, timestamp: endsAt });
   clearTimeout(restAlertTimer);
@@ -2148,8 +2170,23 @@ function saveDayEdit() {
 function showNameEditor() {
   showSheet("Your name", "This appears in your daily welcome.", `<label class="field"><span class="field-label">Name</span><input class="text-field" id="user-name" value="${escapeHtml(state.name)}" maxlength="32"></label>`, `<button class="secondary-button" data-action="close-sheet">Cancel</button><button class="primary-button" data-action="save-name">SAVE</button>`);
 }
-function exportBackup() {
+// In the Android app, a browser-style download does nothing, so the file is written to the app's cache and handed to
+// Android's share sheet (Save to Files / Drive, email to yourself…). Browsers download it as before.
+async function exportBackup() {
+  state.lastBackupAt = Date.now(); state.backupSnoozeUntil = "";
   const backup = { app: "Honna", backupVersion: 1, exportedAt: new Date().toISOString(), state };
+  const fileName = `honna-backup-${todayKey()}.json`;
+  if (nativePlugin("Filesystem") && nativePlugin("Share")) {
+    try {
+      const written = await window.Capacitor.nativePromise("Filesystem", "writeFile", { path: fileName, data: JSON.stringify(backup, null, 2), directory: "CACHE", encoding: "utf8" });
+      save(); render();
+      await window.Capacitor.nativePromise("Share", "share", { title: "Honna backup", dialogTitle: "Save your Honna backup", files: [written.uri] });
+    } catch (error) {
+      if (!/cancel/i.test(String(error?.message || error))) toast("The backup couldn't be saved. Please try again.");
+    }
+    return;
+  }
+  save(); render();
   const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
   const link = document.createElement("a");
   link.href = url;
@@ -2159,6 +2196,18 @@ function exportBackup() {
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   toast("Backup downloaded.");
+}
+// Everything lives on this phone, so remind people (gently, at most monthly) to keep a copy somewhere else.
+function backupDue() {
+  if (state.history.length < 3) return false;
+  const today = todayKey();
+  if (state.backupSnoozeUntil && today < state.backupSnoozeUntil) return false;
+  return !state.lastBackupAt || Date.now() - state.lastBackupAt > 30 * dayMs;
+}
+function renderBackupCard() {
+  if (!backupDue()) return "";
+  const when = state.lastBackupAt ? `Your last backup was ${prettyDate(keyFromDate(new Date(state.lastBackupAt)), { month: "long", day: "numeric" })}.` : "You haven't made a backup yet.";
+  return `<section class="cycle-card backup-card"><div><strong>Keep a copy of your training</strong><small>Everything you log lives only on this phone. ${when} Save a backup file somewhere safe, like Drive or an email to yourself.</small></div><div class="cycle-actions"><button class="secondary-button" data-action="backup-later">Later</button><button class="primary-button" data-action="export-backup">BACK UP</button></div></section>`;
 }
 function openBackupPicker() {
   const input = document.createElement("input");
@@ -3532,6 +3581,8 @@ document.addEventListener("click", (event) => {
   else if (action === "edit-name") showNameEditor();
   else if (action === "save-name") { state.name = document.querySelector("#user-name").value.trim(); save(); document.querySelector(".overlay")?.remove(); render(); }
   else if (action === "export-backup") exportBackup();
+  else if (action === "backup-later") { state.backupSnoozeUntil = addDays(todayKey(), 14); save(); render(); toast("Okay, Honna will remind you in two weeks."); }
+  else if (action === "exact-alarms") { window.Capacitor?.nativePromise?.("LocalNotifications", "changeExactNotificationSetting").then(refreshNativeNotifyState).catch(() => { }); }
   else if (action === "restore-backup") openBackupPicker();
   else if (action === "confirm-restore") {
     if (!restoreDraft) return;
@@ -3578,3 +3629,5 @@ if ("serviceWorker" in navigator && !nativeApp) {
   new MutationObserver(applyUpdate).observe(document.body, { childList: true });
 }
 initializeState();
+refreshNativeNotifyState();
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshNativeNotifyState(); });
