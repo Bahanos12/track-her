@@ -1134,6 +1134,157 @@ function toggleFavoriteFood() {
   const button = document.querySelector("[data-action=food-favorite]");
   if (button) { button.classList.toggle("on", !on); button.innerHTML = `${icon("star")} ${on ? "Add to favourites" : "In favourites"}`; }
 }
+// ---------- Reading a nutrition label from a photo or screenshot (on the device) ----------
+// Each line is matched to a nutrient by its name (English or French) and the first number on it is taken, which is
+// the "per 100 g" column on standard labels. "Of which" lines (saturates, sugars), salt and sodium are skipped.
+function parseNutritionLabel(text) {
+  const found = {};
+  const number = (raw) => Number(String(raw).replace(",", "."));
+  for (const rawLine of String(text || "").split(/\n+/)) {
+    const line = normalizeText(rawLine).replace(/(\d)\s*[oO](?=\s*g\b)/g, "$10").replace(/\b[oO](?=[.,]\d)/g, "0");
+    if (!/\d/.test(line)) continue;
+    if (/satur|sucre|sugar|\bsel\b|salt|sodium|dont |of which|polyol|amidon|starch|mono|poly/.test(line)) continue;
+    const firstNumber = () => { const match = line.match(/(\d+(?:[.,]\d+)?)/); return match ? number(match[1]) : null; };
+    if (/kcal|energ|calor|\bkj\b/.test(line)) {
+      // The first kcal value wins, even when it wrapped onto the next line; kJ is only a fallback.
+      const kcal = line.match(/(\d+(?:[.,]\d+)?)\s*kcal/);
+      const kj = line.match(/(\d+(?:[.,]\d+)?)\s*kj/);
+      if (kcal && found.kcalExact === undefined) found.kcalExact = Math.round(number(kcal[1]));
+      if (kj && found.kcalFromKj === undefined) found.kcalFromKj = Math.round(number(kj[1]) / 4.184);
+      if (!kcal && !kj && found.kcalPlain === undefined && /calor/.test(line)) found.kcalPlain = Math.round(firstNumber());
+      continue;
+    }
+    const assign = (key) => {
+      if (found[key] !== undefined) return;
+      const match = line.match(/(\d+(?:[.,]\d+)?)/);
+      if (!match) return;
+      const value = number(match[1]);
+      if (value < 10000) { found[key] = Math.round(value * 10) / 10; if (!/[.,]/.test(match[1]) && match[1].length >= 2) (found.undotted ||= []).push(key); }
+    };
+    if (/prot/.test(line)) assign("protein");
+    else if (/fib(er|re)/.test(line)) assign("fiber");
+    else if (/carb|glucid|hydrates? de carbone/.test(line)) assign("carbs");
+    else if (/\bfat\b|\bfats\b|lipid|grasse|graisse/.test(line)) assign("fat");
+  }
+  const kcal = found.kcalExact ?? found.kcalPlain ?? found.kcalFromKj;
+  delete found.kcalExact; delete found.kcalFromKj; delete found.kcalPlain;
+  if (kcal !== undefined) found.kcal = kcal;
+  restoreDecimalPoints(found);
+  return found;
+}
+// Text recognition often drops the small dot in "9.5 g". For every gram value read without a separator, try it with
+// and without a dot before its last digit, and keep the combination that fits a label: no value above 100 g, all
+// together at most 100 g, and calories close to 4 × protein + 4 × carbs + 9 × fat + 2 × fiber.
+function restoreDecimalPoints(found) {
+  const keys = (found.undotted || []).filter((key) => found[key] !== undefined);
+  delete found.undotted;
+  if (!keys.length) return;
+  const grams = ["protein", "carbs", "fat", "fiber"];
+  let best = null;
+  for (let mask = 0; mask < 1 << keys.length; mask += 1) {
+    const trial = { ...found };
+    keys.forEach((key, index) => { if (mask & (1 << index)) trial[key] = Math.round(found[key]) / 10; });
+    const values = grams.map((key) => trial[key] ?? 0);
+    if (values.some((value) => value > 100) || values.reduce((sum, value) => sum + value, 0) > 100) continue;
+    const energy = 4 * (trial.protein ?? 0) + 4 * (trial.carbs ?? 0) + 9 * (trial.fat ?? 0) + 2 * (trial.fiber ?? 0);
+    const error = found.kcal ? Math.abs(energy - found.kcal) : 0;
+    const cost = error + mask.toString(2).split("1").length * 0.5; // with no clear winner, change as little as possible
+    if (!best || cost < best.cost) best = { cost, trial };
+  }
+  if (best) for (const key of keys) found[key] = best.trial[key];
+}
+// Words → rows: words whose vertical centres line up form one row, read left to right ("Protein ... 9.5 g").
+function labelRowsText(data) {
+  const words = (data?.blocks || []).flatMap((block) => block.paragraphs.flatMap((paragraph) => paragraph.lines.flatMap((line) => line.words)))
+    .filter((word) => word.text?.trim() && word.bbox).sort((a, b) => (a.bbox.y0 + a.bbox.y1) - (b.bbox.y0 + b.bbox.y1));
+  const rows = [];
+  for (const word of words) {
+    const middle = (word.bbox.y0 + word.bbox.y1) / 2, height = word.bbox.y1 - word.bbox.y0;
+    const row = rows.find((item) => Math.abs(item.middle - middle) < Math.max(item.height, height) * 0.6);
+    if (row) { row.words.push(word); row.middle = (row.middle * (row.words.length - 1) + middle) / row.words.length; row.height = Math.max(row.height, height); }
+    else rows.push({ middle, height, words: [word] });
+  }
+  return rows.sort((a, b) => a.middle - b.middle).map((row) => row.words.sort((a, b) => a.bbox.x0 - b.bbox.x0).map((word) => word.text).join(" ")).join("\n");
+}
+// Labels are simple: grey, dark text on light (white-on-black screenshots are flipped), stretched contrast.
+// (The workout-sheet cleanup erases thin lines, which also eats decimal points on small labels.)
+function prepareLabelCanvas(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const image = context.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = image.data, count = canvas.width * canvas.height;
+  const grey = new Float32Array(count);
+  let total = 0;
+  for (let index = 0; index < count; index += 1) { grey[index] = pixels[index * 4] * .299 + pixels[index * 4 + 1] * .587 + pixels[index * 4 + 2] * .114; total += grey[index]; }
+  const invert = total / count < 128;
+  const sorted = Float32Array.from(grey).sort();
+  // Text is often under 1% of the pixels, so the stretch uses near-extreme values, not percentiles of the page.
+  const low = sorted[Math.floor(count * 0.0005)], high = sorted[Math.min(count - 1, Math.floor(count * 0.9995))];
+  const range = high - low > 40 ? high - low : 255;
+  for (let index = 0; index < count; index += 1) {
+    let value = range === 255 ? grey[index] : Math.max(0, Math.min(255, ((grey[index] - low) / range) * 255));
+    if (invert) value = 255 - value;
+    pixels[index * 4] = pixels[index * 4 + 1] = pixels[index * 4 + 2] = value;
+  }
+  // Table borders make the recognizer skip whole cells: whiten long straight dark runs (letters are never that long).
+  const width = canvas.width, height = canvas.height, dark = (index) => pixels[index * 4] < 140;
+  const whiten = (index) => { pixels[index * 4] = pixels[index * 4 + 1] = pixels[index * 4 + 2] = 255; };
+  for (let y = 0; y < height; y += 1) {
+    let start = -1;
+    for (let x = 0; x <= width; x += 1) {
+      if (x < width && dark(y * width + x)) { if (start < 0) start = x; continue; }
+      if (start >= 0 && x - start > width * 0.25) for (let fill = start; fill < x; fill += 1) whiten(y * width + fill);
+      start = -1;
+    }
+  }
+  for (let x = 0; x < width; x += 1) {
+    let start = -1;
+    for (let y = 0; y <= height; y += 1) {
+      if (y < height && dark(y * width + x)) { if (start < 0) start = y; continue; }
+      if (start >= 0 && y - start > height * 0.15) for (let fill = start; fill < y; fill += 1) whiten(fill * width + x);
+      start = -1;
+    }
+  }
+  context.putImageData(image, 0, 0);
+}
+async function readNutritionPhoto(file) {
+  const status = document.querySelector("#cf-ocr-status");
+  const say = (message) => { if (status) status.innerHTML = message; };
+  try {
+    say("Reading the label…");
+    const bitmap = await createImageBitmap(file);
+    // Every picture is brought to about 1300 px on its longest side: small screenshots grow, big photos shrink,
+    // so letters land near the size the recognizer reads best.
+    const scale = Math.max(0.3, Math.min(4, 1300 / Math.max(bitmap.width, bitmap.height)));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+    prepareLabelCanvas(canvas);
+    const Tesseract = await loadTesseract();
+    say("Reading the label… (the first time takes a little longer)");
+    const worker = await Tesseract.createWorker("eng");
+    let text = "";
+    try {
+      // Sparse-text mode finds words even inside table borders; rows are rebuilt from the word positions.
+      await worker.setParameters({ preserve_interword_spaces: "1", tessedit_pageseg_mode: "11" });
+      const { data } = await worker.recognize(canvas, {}, { blocks: true, text: true });
+      text = labelRowsText(data) || data.text || "";
+    } finally { await worker.terminate(); canvas.width = canvas.height = 0; }
+    const values = parseNutritionLabel(text);
+    const fields = [["kcal", "#cf-kcal", "kcal"], ["protein", "#cf-protein", "g protein"], ["carbs", "#cf-carbs", "g carbs"], ["fat", "#cf-fat", "g fat"], ["fiber", "#cf-fiber", "g fiber"]];
+    const filled = [];
+    for (const [key, selector, unit] of fields) {
+      const input = document.querySelector(selector);
+      if (!input || values[key] === undefined || Number.isNaN(values[key])) continue;
+      input.value = values[key]; input.classList.add("ocr-filled"); filled.push(`${values[key]} ${unit}`);
+    }
+    if (!filled.length) { say("Honna couldn't find nutrition values in that picture. Try a sharper, straight-on photo of the table, or type them in."); return; }
+    const missing = fields.filter(([key]) => values[key] === undefined).map(([, , unit]) => unit.replace(/^g /, ""));
+    say(`Read: ${escapeHtml(filled.join(" · "))}.${missing.length ? ` Not found: ${escapeHtml(missing.join(", "))}.` : ""} <strong>Check them against the label before saving</strong>, and make sure they're per 100 g.`);
+  } catch (error) {
+    say(escapeHtml(error?.message || "The picture couldn't be read.").replace(/^(.*)$/, "Couldn't read the picture: $1"));
+  }
+}
 let customFoodEditId = null;
 function showCustomFood(food = null) {
   customFoodEditId = food?.id || null;
@@ -1141,8 +1292,12 @@ function showCustomFood(food = null) {
   const value = (number) => (number === null || number === undefined ? "" : number);
   const used = food ? Object.values(nutrition().logs).flat().filter((entry) => entry.foodId === food.id).length : 0;
   const update = used ? `<label class="check-field"><input type="checkbox" id="cf-update" checked><span>Also update the ${used} ${used === 1 ? "entry" : "entries"} already logged with this food</span></label>` : "";
-  showSheet(food ? "Edit food" : "Create a food", "Values per 100 g, from the label.", `<label class="field"><span class="field-label">Name</span><input class="text-field" id="cf-name" maxlength="60" placeholder="e.g. Mum's lasagne" value="${escapeHtml(food?.name || "")}"></label><div class="counter-row"><label class="field"><span class="field-label">Calories (kcal)</span><input class="number-field" id="cf-kcal" type="text" inputmode="decimal" value="${value(per.kcal)}"></label><label class="field"><span class="field-label">Protein (g)</span><input class="number-field" id="cf-protein" type="text" inputmode="decimal" value="${value(per.protein)}"></label></div><div class="counter-row"><label class="field"><span class="field-label">Carbs (g)</span><input class="number-field" id="cf-carbs" type="text" inputmode="decimal" value="${value(per.carbs)}"></label><label class="field"><span class="field-label">Fat (g)</span><input class="number-field" id="cf-fat" type="text" inputmode="decimal" value="${value(per.fat)}"></label></div><div class="counter-row"><label class="field"><span class="field-label">Fiber (g)</span><input class="number-field" id="cf-fiber" type="text" inputmode="decimal" value="${value(per.fiber)}"></label><label class="field"><span class="field-label">Usual portion (g) <small>optional</small></span><input class="number-field" id="cf-serving" type="text" inputmode="decimal" value="${value(food?.serving?.grams)}"></label></div>${update}`, food ? `<button class="danger-button" data-action="food-custom-delete">Delete</button><button class="primary-button" data-action="food-custom-save">SAVE</button>` : `<button class="secondary-button" data-action="food-back">Back</button><button class="primary-button" data-action="food-custom-save">SAVE</button>`);
+  const photo = `<div class="ocr-box"><label class="secondary-button ocr-button">${icon("scan")} &nbsp;Read from a photo or screenshot<input type="file" accept="image/*" id="cf-photo" hidden></label><small id="cf-ocr-status" class="ocr-status">Snap the nutrition table on the pack, or pick a screenshot. It's read on this phone.</small></div>`;
+  showSheet(food ? "Edit food" : "Create a food", "Values per 100 g, from the label.", `${photo}<label class="field"><span class="field-label">Name</span><input class="text-field" id="cf-name" maxlength="60" placeholder="e.g. Mum's lasagne" value="${escapeHtml(food?.name || "")}"></label><div class="counter-row"><label class="field"><span class="field-label">Calories (kcal)</span><input class="number-field" id="cf-kcal" type="text" inputmode="decimal" value="${value(per.kcal)}"></label><label class="field"><span class="field-label">Protein (g)</span><input class="number-field" id="cf-protein" type="text" inputmode="decimal" value="${value(per.protein)}"></label></div><div class="counter-row"><label class="field"><span class="field-label">Carbs (g)</span><input class="number-field" id="cf-carbs" type="text" inputmode="decimal" value="${value(per.carbs)}"></label><label class="field"><span class="field-label">Fat (g)</span><input class="number-field" id="cf-fat" type="text" inputmode="decimal" value="${value(per.fat)}"></label></div><div class="counter-row"><label class="field"><span class="field-label">Fiber (g)</span><input class="number-field" id="cf-fiber" type="text" inputmode="decimal" value="${value(per.fiber)}"></label><label class="field"><span class="field-label">Usual portion (g) <small>optional</small></span><input class="number-field" id="cf-serving" type="text" inputmode="decimal" value="${value(food?.serving?.grams)}"></label></div>${update}`, food ? `<button class="danger-button" data-action="food-custom-delete">Delete</button><button class="primary-button" data-action="food-custom-save">SAVE</button>` : `<button class="secondary-button" data-action="food-back">Back</button><button class="primary-button" data-action="food-custom-save">SAVE</button>`);
 }
+document.addEventListener("change", (event) => {
+  if (event.target?.id === "cf-photo" && event.target.files?.[0]) { readNutritionPhoto(event.target.files[0]); event.target.value = ""; }
+});
 function saveCustomFood() {
   const name = document.querySelector("#cf-name")?.value.trim();
   if (!name) { document.querySelector("#cf-name")?.focus(); toast("Give the food a name."); return; }
