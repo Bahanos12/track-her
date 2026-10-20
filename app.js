@@ -1405,9 +1405,10 @@ function renderFood() {
   const calories = data.showCalories ? `<div class="food-kcal"><strong>${Math.round(totals.kcal).toLocaleString("en-US")}</strong><span>${goals.kcal ? `of ${goals.kcal.toLocaleString("en-US")} kcal` : "kcal"}</span>${goals.kcal ? `<small>${totals.kcal <= goals.kcal ? `${Math.round(goals.kcal - totals.kcal).toLocaleString("en-US")} left` : `${Math.round(totals.kcal - goals.kcal).toLocaleString("en-US")} above your goal`}</small>` : ""}</div>` : "";
   const bars = macroKeys.map(([key, label]) => {
     const goal = goals[key], value = totals[key];
-    return `<div class="macro macro-${key}"><div class="macro-head"><span>${label}</span><strong>${gramsText(value)}${goal ? ` <small>/ ${goal} g</small>` : ""}</strong></div>${goal ? `<span class="macro-track"><i style="width:${Math.min(100, (value / goal) * 100).toFixed(0)}%"></i></span>` : ""}</div>`;
+    return `<button class="macro macro-${key}" data-action="food-goals" aria-label="${label}: ${gramsText(value)}${goal ? ` of ${goal} g` : ""}. Edit goals"><div class="macro-head"><span>${label}</span><strong>${gramsText(value)}${goal ? ` <small>/ ${goal} g</small>` : ""}</strong></div>${goal ? `<span class="macro-track"><i style="width:${Math.min(100, (value / goal) * 100).toFixed(0)}%"></i></span>` : ""}</button>`;
   }).join("");
-  const summary = `<section class="act-card food-summary${data.showCalories ? "" : " no-kcal"}">${calories}<div class="macros">${bars}</div>${!goals.kcal && !goals.protein ? `<button class="link-button" data-action="food-goals">Set daily goals ${icon("arrow")}</button>` : ""}</section>`;
+  const hasGoals = macroKeys.some(([key]) => goals[key]) || (data.showCalories && goals.kcal);
+  const summary = `<section class="act-card food-summary${data.showCalories ? "" : " no-kcal"}"><div class="food-summary-head"><span class="eyebrow">Totals</span><button class="food-goals-edit" data-action="food-goals">${icon("edit")} ${hasGoals ? "Edit goals" : "Set goals"}</button></div>${calories}<div class="macros">${bars}</div></section>`;
   const meals = mealTypes.map(([key, label]) => {
     const items = foodEntries(date).filter((entry) => entry.meal === key);
     const mealTotals = items.reduce((sum, item) => ({ kcal: sum.kcal + (item.kcal || 0), protein: sum.protein + (item.protein || 0) }), { kcal: 0, protein: 0 });
@@ -1550,7 +1551,7 @@ function stepStreak() {
 const mondayOf = (key) => { const date = dateFromKey(key); return addDays(key, -((date.getDay() + 6) % 7)); };
 function renderActivityRing(steps, goal) {
   const radius = 42, circumference = 2 * Math.PI * radius, share = goal > 0 ? Math.min(1, steps / goal) : 0;
-  return `<div class="act-ring${steps >= goal ? " goal-met" : ""}"><svg viewBox="0 0 100 100" aria-hidden="true"><circle class="act-track" cx="50" cy="50" r="${radius}"></circle><circle class="act-progress" cx="50" cy="50" r="${radius}" stroke-dasharray="${(share * circumference).toFixed(2)} ${circumference.toFixed(2)}" transform="rotate(-90 50 50)"></circle></svg><div class="act-ring-center"><strong>${formatSteps(steps)}</strong><span>of ${formatSteps(goal)} steps</span></div></div>`;
+  return `<div class="act-ring${steps >= goal ? " goal-met" : ""}"><svg viewBox="0 0 100 100" aria-hidden="true"><circle class="act-track" cx="50" cy="50" r="${radius}"></circle><circle class="act-progress" cx="50" cy="50" r="${radius}" stroke-dasharray="${(share * circumference).toFixed(2)} ${circumference.toFixed(2)}" transform="rotate(-90 50 50)"></circle></svg><div class="act-ring-center"><strong>${formatSteps(steps)}</strong><button class="act-goal-link" data-action="activity-goal" aria-label="Change your daily goal of ${formatSteps(goal)} steps">of ${formatSteps(goal)} steps ${icon("edit")}</button></div></div>`;
 }
 function renderWeekBars() {
   const goal = activity().goal, today = todayKey(), monday = mondayOf(today);
